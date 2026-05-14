@@ -3,6 +3,7 @@ import Combine
 import CoreML
 import FluidAudio
 import Foundation
+import ShhhcribbleShared
 import UIKit
 import os
 
@@ -139,6 +140,11 @@ actor TranscriptionService {
     private var loadTask: Task<Void, Error>?
     private var recording = false
     private var stopRequested = false
+    /// Set by `stopRecording` when called before `recordAndTranscribe`
+    /// finished its init (race on the Darwin start/stop path). Honoured at
+    /// the earliest stable point inside `recordAndTranscribe` — see below.
+    private var pendingStopBeforeStart = false
+    private var pendingCancelBeforeStart = false
     private var cancelled = false
     private var reloading = false
 
@@ -273,7 +279,15 @@ actor TranscriptionService {
 
     func stopRecording() async {
         guard recording, !stopRequested else {
-            await TranscriptionStatus.shared.event("Stop: already stopping or not recording")
+            if !recording {
+                // Stop arrived before recordAndTranscribe finished initialising
+                // (Darwin-notification path, short hold). Defer the stop to
+                // the next stable point inside recordAndTranscribe.
+                pendingStopBeforeStart = true
+                await TranscriptionStatus.shared.event("Stop deferred until recording starts")
+            } else {
+                await TranscriptionStatus.shared.event("Stop: already stopping or not recording")
+            }
             return
         }
         stopRequested = true
@@ -321,7 +335,12 @@ actor TranscriptionService {
     /// restore clipboard immediately. Invoked by the in-app Cancel button.
     func cancelRecording() async {
         guard recording, !stopRequested else {
-            await TranscriptionStatus.shared.event("Cancel: already stopping or not recording")
+            if !recording {
+                pendingCancelBeforeStart = true
+                await TranscriptionStatus.shared.event("Cancel deferred until recording starts")
+            } else {
+                await TranscriptionStatus.shared.event("Cancel: already stopping or not recording")
+            }
             return
         }
         cancelled = true
@@ -350,8 +369,17 @@ actor TranscriptionService {
     ) async throws {
         guard !recording else { return }
 
-        // Pre-flight mic permission so we don't fail silently inside the
-        // tap install. Surface a typed error UX in the recording overlay.
+        // Claim the recording slot ATOMICALLY before any suspension point.
+        // Without this, a Darwin-notification stop arriving during the
+        // permission check sees `recording == false`, sets pendingStop,
+        // and recordAndTranscribe bails before capturing any audio.
+        recording = true
+        stopRequested = false
+        cancelled = false
+        lastPartial = ""
+
+        // Pre-flight mic permission. Surface a typed error UX in the
+        // recording overlay if denied.
         let perm = await MainActor.run { AVAudioApplication.shared.recordPermission }
         switch perm {
         case .granted:
@@ -359,20 +387,35 @@ actor TranscriptionService {
         case .undetermined:
             let granted = await AVAudioApplication.requestRecordPermission()
             if !granted {
+                recording = false
                 await TranscriptionStatus.shared.setPhase(.error(.micPermissionDenied))
                 return
             }
         case .denied:
+            recording = false
             await TranscriptionStatus.shared.setPhase(.error(.micPermissionDenied))
             return
         @unknown default:
             break
         }
 
-        recording = true
-        stopRequested = false
-        cancelled = false
-        lastPartial = ""
+        // If a stop/cancel was deferred during permission init (Darwin race),
+        // do NOT bail — the user's hold likely captured something. Set the
+        // normal stop flag and let recordAndTranscribe run its course; the
+        // recording loop will see stopRequested and tear down immediately
+        // after the engine is up.
+        let stopAlready = pendingStopBeforeStart
+        let cancelAlready = pendingCancelBeforeStart
+        pendingStopBeforeStart = false
+        pendingCancelBeforeStart = false
+        if cancelAlready {
+            cancelled = true
+            stopRequested = true
+            await TranscriptionStatus.shared.event("Deferred cancel — will tear down after engine starts")
+        } else if stopAlready {
+            stopRequested = true
+            await TranscriptionStatus.shared.event("Deferred stop — will commit minimum-length recording")
+        }
         tdtBuffers.removeAll(keepingCapacity: true)
         tdtLastLiveAt = nil
         recordingStartedAt = Date()
@@ -482,6 +525,20 @@ actor TranscriptionService {
         }
 
         await TranscriptionStatus.shared.event("Recording (\(loadedMode?.rawValue ?? "?"))…")
+
+        // The stream and engine are now live. If a stop or cancel was
+        // requested during the pre-engine init window (Darwin race), tear
+        // down NOW — at this point streamContinuation and recorder exist
+        // and stopRecording() can do its normal job.
+        if stopRequested {
+            await TranscriptionStatus.shared.event("Honouring pre-engine stop request — tearing down now")
+            recorder.stop()
+            streamContinuation?.finish()
+            streamContinuation = nil
+            // Fall through to the streaming/tdt switch below so the existing
+            // commit + cleanup path runs. The stop flag short-circuits any
+            // further sample accumulation.
+        }
 
         switch loadedMode {
         case .streaming:
@@ -686,6 +743,16 @@ actor TranscriptionService {
         appendingTo: UUID?
     ) {
         UIPasteboard.general.string = text
+        if trigger == .keyboard {
+            // Write to App Group so the keyboard extension can pick it up
+            // and inject via UITextDocumentProxy when the user switches
+            // back to the host text field. Darwin notification wakes the
+            // keyboard's observer immediately if it's still active; the
+            // textDidChange / viewDidAppear fallback covers the case
+            // where the keyboard was suspended.
+            KeyboardBridge.writeTranscript(text)
+            KeyboardBridge.postDarwin(KeyboardBridge.darwinTranscriptReady)
+        }
         if let id = appendingTo {
             NotesRepository.shared.append(transcript: text, to: id)
             ToastManager.shared.show("Added to note", systemImage: "text.append")
@@ -696,7 +763,13 @@ actor TranscriptionService {
                 trigger: trigger
             )
             // Toast handles the success haptic so we don't double up.
-            ToastManager.shared.show("Copied to clipboard", systemImage: "doc.on.doc.fill")
+            let toastMessage = trigger == .keyboard
+                ? "Ready — switch back to insert"
+                : "Copied to clipboard"
+            let toastIcon = trigger == .keyboard
+                ? "keyboard"
+                : "doc.on.doc.fill"
+            ToastManager.shared.show(toastMessage, systemImage: toastIcon)
         }
     }
 

@@ -1,0 +1,154 @@
+import Foundation
+
+/// Cross-process bridge between the main app and the keyboard extension.
+/// Both targets link `ShhhcribbleShared`, so both see the same constants.
+///
+/// Two transport layers, used together:
+///
+/// 1. **Darwin notifications** (`CFNotificationCenterGetDarwinNotifyCenter`)
+///    for low-latency cross-process wake-ups. UserDefaults KVO doesn't
+///    fire reliably across processes; Darwin notifications do (~10 ms).
+///
+/// 2. **App Group `UserDefaults`** (suite `group.com.shhhcribble.app`)
+///    for the payloads — short strings and timestamps. Darwin
+///    notifications themselves carry no payload, so the listener reads
+///    the latest payload from UserDefaults after receiving the signal.
+///
+/// Direction:
+///   - keyboard → main:  post `.startRecording` / `.stopRecording`.
+///                       Cold-start (engine not alive): keyboard calls
+///                       `extensionContext.open(recordURL)` to bootstrap.
+///   - main → keyboard:  write transcript + timestamp, post
+///                       `.transcriptReady`. Keyboard observes and
+///                       inserts via `textDocumentProxy.insertText`.
+///   - main heartbeat:   while audio session is alive, main writes
+///                       `engineKeepAlive = Date()` every ~5 s so the
+///                       keyboard can decide cold-start vs warm path.
+public enum KeyboardBridge {
+    public static let appGroupID = "group.com.shhhcribble.app"
+    public static let urlScheme = "shhhcribble"
+    public static let recordURL = URL(string: "shhhcribble://record-from-keyboard")!
+
+    /// How fresh `engineKeepAlive` must be for the warm-path Darwin
+    /// notification to be considered viable. Two heartbeat intervals.
+    public static let keepAliveStale: TimeInterval = 12
+
+    // MARK: Darwin notification names
+
+    public static let darwinStart = "com.shhhcribble.darwin.start" as CFString
+    public static let darwinStop = "com.shhhcribble.darwin.stop" as CFString
+    public static let darwinTranscriptReady = "com.shhhcribble.darwin.transcript" as CFString
+
+    // MARK: Keys
+
+    private enum Key {
+        static let transcript = "keyboard.transcript"
+        static let transcriptReadyAt = "keyboard.transcriptReadyAt"
+        static let engineKeepAlive = "keyboard.engineKeepAlive"
+        static let pttSignal = "keyboard.pttSignal"          // "start" | "stop"
+        static let pttSignalAt = "keyboard.pttSignalAt"      // Date
+    }
+
+    // MARK: PTT signal (keyboard → main, App Group polling)
+    // Darwin notifications turned out to be unreliable across the
+    // extension/app sandbox boundary on iOS — confirmed in-process but
+    // not received from the keyboard extension. App Group UserDefaults
+    // polling is slower (~100 ms latency) but reliable.
+
+    public enum PTTSignal: String {
+        case start
+        case stop
+    }
+
+    public static func writePTTSignal(_ signal: PTTSignal) {
+        defaults?.set(signal.rawValue, forKey: Key.pttSignal)
+        defaults?.set(Date(), forKey: Key.pttSignalAt)
+    }
+
+    /// Returns the latest PTT signal + timestamp, or nil if none/cleared.
+    public static func readPTTSignal() -> (signal: PTTSignal, at: Date)? {
+        guard
+            let raw = defaults?.string(forKey: Key.pttSignal),
+            let signal = PTTSignal(rawValue: raw),
+            let at = defaults?.object(forKey: Key.pttSignalAt) as? Date
+        else { return nil }
+        return (signal, at)
+    }
+
+    public static func clearPTTSignal() {
+        defaults?.removeObject(forKey: Key.pttSignal)
+        defaults?.removeObject(forKey: Key.pttSignalAt)
+    }
+
+    /// Shared UserDefaults handle. Nil only if the App Group entitlement is
+    /// misconfigured — callers should fail soft (do nothing) rather than crash.
+    public static var defaults: UserDefaults? {
+        UserDefaults(suiteName: appGroupID)
+    }
+
+    // MARK: Engine keepalive (main app writes, keyboard reads)
+
+    /// Main app calls this every ~5 s while audio session is alive.
+    public static func heartbeat() {
+        defaults?.set(Date(), forKey: Key.engineKeepAlive)
+    }
+
+    /// True if the main app heartbeated within the last `keepAliveStale` seconds.
+    public static var isEngineWarm: Bool {
+        guard let last = defaults?.object(forKey: Key.engineKeepAlive) as? Date else { return false }
+        return Date().timeIntervalSince(last) < keepAliveStale
+    }
+
+    // MARK: Transcript handoff (main → keyboard)
+
+    public static func writeTranscript(_ text: String) {
+        guard !text.isEmpty else { return }
+        defaults?.set(text, forKey: Key.transcript)
+        defaults?.set(Date(), forKey: Key.transcriptReadyAt)
+    }
+
+    /// Reads any pending transcript and clears it.
+    public static func consumeTranscript() -> String? {
+        guard let text = defaults?.string(forKey: Key.transcript),
+              !text.isEmpty else { return nil }
+        defaults?.removeObject(forKey: Key.transcript)
+        defaults?.removeObject(forKey: Key.transcriptReadyAt)
+        return text
+    }
+
+    public static var transcriptReadyAt: Date? {
+        defaults?.object(forKey: Key.transcriptReadyAt) as? Date
+    }
+
+    // MARK: Darwin notification helpers
+
+    /// Post a Darwin notification. Cross-process, payload-less, fast.
+    public static func postDarwin(_ name: CFString) {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(center, CFNotificationName(name), nil, nil, true)
+    }
+
+    /// Add an observer. Caller is responsible for removing on deinit.
+    /// Note: the `userInfo` passed to Darwin observers is always nil — use
+    /// the App Group `UserDefaults` for any payload.
+    public static func observeDarwin(
+        _ name: CFString,
+        observer: UnsafeRawPointer,
+        callback: @escaping CFNotificationCallback
+    ) {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            callback,
+            name,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    public static func removeDarwinObserver(_ observer: UnsafeRawPointer) {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterRemoveEveryObserver(center, observer)
+    }
+}

@@ -10,6 +10,8 @@
 		05C4764EDF8D8245F48C899B /* StartRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6836E2B6F662F9DFBCBC4D3 /* StartRecordingIntent.swift */; };
 		0642854955935156E76FEFEC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A66FFE6583F71BE22473665B /* ContentView.swift */; };
 		0DD1EB5203E3565C4328AA54 /* ShhhcribbleActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DD50CC8335662AB2606C4D2 /* ShhhcribbleActivityManager.swift */; };
+		154528CEFF3E0E6930181BFE /* ShhhcribbleKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6FF0AD71DEC82E94A00B443D /* ShhhcribbleKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		181A81091C8A4187821BC287 /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		1BDCAA44C32853FE8EBA56E9 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4BB3787641C3AEA5939B72 /* Note.swift */; };
 		1CF7B95C1AF267E26C793831 /* NotesRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 656869E266D1C8CCF0A5B31B /* NotesRepository.swift */; };
 		239F705F50711D4DFD4AF893 /* String+Filters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC7CD9084CEFD0BC71D09EF /* String+Filters.swift */; };
@@ -26,6 +28,7 @@
 		7485596D89D91B4F32AB7402 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D1BE8FC5BFF46DBFE2BC0EA8 /* FluidAudio */; };
 		7F7E72E500EF1FBCB19F272B /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		8296F9A45D14F85C84C36697 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF932B842F1D3FF7670E760F /* Assets.xcassets */; };
+		82D25E7788D3FA316053B15D /* KeyboardRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FC191D0172714C04A3D24F /* KeyboardRootView.swift */; };
 		87B5F71EBE470C60CE651AE7 /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		894BD64061A8B06DB088C20C /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */; };
 		8B2AB72AD46FC20682EE9EB3 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E35F65B3A78E3990E7794AE /* OnboardingView.swift */; };
@@ -36,10 +39,12 @@
 		AE47FFD5C0433E6E197097D1 /* ShhhcribbleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A660C5D593C571BE20F2F69E /* ShhhcribbleApp.swift */; };
 		B2DC6A9E4BB42904174465C6 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 226236F0C41379F9E638673C /* NoteDetailView.swift */; };
 		B6B8018E3F1EBEF46442FB99 /* ShhhcribbleWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F03C07BF30107CC41CC0D9 /* ShhhcribbleWidgetBundle.swift */; };
+		BB02C5FB2849D2331C7FC812 /* KeyboardBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4853708B504A76F209891E01 /* KeyboardBridge.swift */; };
 		C680884E02E47E863C450850 /* ShhhcribbleWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07913D96A6F38303729C43F7 /* ShhhcribbleWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CA8574DCFEFEB1A394A670D6 /* ClipboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */; };
 		CAF1BF9ED9D4C2A49B90975A /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 687417872E4192504E8FED30 /* AudioRecorder.swift */; };
 		D2896EEE392BDFAC6D883C61 /* RecordControlWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */; };
+		D82DDEAA89E30B8359D041B9 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */; };
 		DE0F38109584DB8B63DE3D06 /* ShhhcribbleShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEFA5C1EC303F6764B041D06 /* ShhhcribbleShortcuts.swift */; };
 		E0EA78225E4C637B6B14A149 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D583108174E01A3A8E7318A /* StopRecordingIntent.swift */; };
 		E923735934BFE63510C7C276 /* CustomWordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A507110BACFF08E47FFE2EFC /* CustomWordsView.swift */; };
@@ -51,7 +56,21 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		0B95250727585CEE643DA99F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9054702CAADE5D2384401B07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA350CA80DA32C360C0ADF61;
+			remoteInfo = ShhhcribbleKeyboard;
+		};
 		2E8F2A56219F992FDCBFA824 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9054702CAADE5D2384401B07 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 74608F668B94B346DC387D22;
+			remoteInfo = ShhhcribbleShared;
+		};
+		5A17F4B2866693941A192A5E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 9054702CAADE5D2384401B07 /* Project object */;
 			proxyType = 1;
@@ -93,6 +112,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				C680884E02E47E863C450850 /* ShhhcribbleWidget.appex in Embed Foundation Extensions */,
+				154528CEFF3E0E6930181BFE /* ShhhcribbleKeyboard.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -110,12 +130,15 @@
 		33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailViewModel.swift; sourceTree = "<group>"; };
 		3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
 		46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordControlWidget.swift; sourceTree = "<group>"; };
+		4853708B504A76F209891E01 /* KeyboardBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardBridge.swift; sourceTree = "<group>"; };
 		4DC7CD9084CEFD0BC71D09EF /* String+Filters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+Filters.swift"; sourceTree = "<group>"; };
 		501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ShhhcribbleShared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		553D8890C795CDE235977EFD /* AudioInterruptionObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInterruptionObserver.swift; sourceTree = "<group>"; };
+		55FC191D0172714C04A3D24F /* KeyboardRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardRootView.swift; sourceTree = "<group>"; };
 		656869E266D1C8CCF0A5B31B /* NotesRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesRepository.swift; sourceTree = "<group>"; };
 		687417872E4192504E8FED30 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		6D583108174E01A3A8E7318A /* StopRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopRecordingIntent.swift; sourceTree = "<group>"; };
+		6FF0AD71DEC82E94A00B443D /* ShhhcribbleKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShhhcribbleKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		78E2494F7C979E52B94887C1 /* String+Substitutions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+Substitutions.swift"; sourceTree = "<group>"; };
 		7E35F65B3A78E3990E7794AE /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		8251392958D48F0A74CFEA33 /* AudioSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioSessionManager.swift; sourceTree = "<group>"; };
@@ -136,6 +159,7 @@
 		EEFA5C1EC303F6764B041D06 /* ShhhcribbleShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleShortcuts.swift; sourceTree = "<group>"; };
 		F647A6F2EE2757605B66066F /* ShhhcribbleActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleActivityAttributes.swift; sourceTree = "<group>"; };
 		F6F03C07BF30107CC41CC0D9 /* ShhhcribbleWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleWidgetBundle.swift; sourceTree = "<group>"; };
+		F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
 		FE4BB3787641C3AEA5939B72 /* Note.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Note.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -145,6 +169,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				7F7E72E500EF1FBCB19F272B /* ShhhcribbleShared.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3295C20365D8240EFBB39AE9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				181A81091C8A4187821BC287 /* ShhhcribbleShared.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -194,6 +226,7 @@
 			isa = PBXGroup;
 			children = (
 				B9C437972E6B5039803293F2 /* ShhhcribbleiOS */,
+				D67B7F364DCC1463B775818B /* ShhhcribbleKeyboard */,
 				B520FD1A3AA8E3426C6BB35A /* ShhhcribbleShared */,
 				472AAB5A564E23D487F947EA /* ShhhcribbleWidget */,
 				86E0F2356E0D1B979EA3C534 /* Products */,
@@ -215,6 +248,7 @@
 			isa = PBXGroup;
 			children = (
 				E4BF17FFB6570534E1109553 /* ShhhcribbleiOS.app */,
+				6FF0AD71DEC82E94A00B443D /* ShhhcribbleKeyboard.appex */,
 				501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */,
 				07913D96A6F38303729C43F7 /* ShhhcribbleWidget.appex */,
 			);
@@ -263,6 +297,7 @@
 		B520FD1A3AA8E3426C6BB35A /* ShhhcribbleShared */ = {
 			isa = PBXGroup;
 			children = (
+				4853708B504A76F209891E01 /* KeyboardBridge.swift */,
 				F647A6F2EE2757605B66066F /* ShhhcribbleActivityAttributes.swift */,
 			);
 			path = ShhhcribbleShared;
@@ -309,6 +344,15 @@
 				FE4BB3787641C3AEA5939B72 /* Note.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		D67B7F364DCC1463B775818B /* ShhhcribbleKeyboard */ = {
+			isa = PBXGroup;
+			children = (
+				55FC191D0172714C04A3D24F /* KeyboardRootView.swift */,
+				F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */,
+			);
+			path = ShhhcribbleKeyboard;
 			sourceTree = "<group>";
 		};
 		E702939B410E5E667BC5CCFE /* Extensions */ = {
@@ -371,6 +415,25 @@
 			productReference = 07913D96A6F38303729C43F7 /* ShhhcribbleWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		AA350CA80DA32C360C0ADF61 /* ShhhcribbleKeyboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3BE5B4A224A0A4031ABF02B2 /* Build configuration list for PBXNativeTarget "ShhhcribbleKeyboard" */;
+			buildPhases = (
+				4C8D56F1C1833618AED3EA11 /* Sources */,
+				3295C20365D8240EFBB39AE9 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9727724276557D00FF05C7CE /* PBXTargetDependency */,
+			);
+			name = ShhhcribbleKeyboard;
+			packageProductDependencies = (
+			);
+			productName = ShhhcribbleKeyboard;
+			productReference = 6FF0AD71DEC82E94A00B443D /* ShhhcribbleKeyboard.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		DE176CCB7BED07C6C8FE235C /* ShhhcribbleiOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F8245497799BB54272F201A9 /* Build configuration list for PBXNativeTarget "ShhhcribbleiOS" */;
@@ -386,6 +449,7 @@
 			dependencies = (
 				51F333337FECCDA2C0AE192F /* PBXTargetDependency */,
 				703943187183DB7EBFE4B6DE /* PBXTargetDependency */,
+				C0395625B72D2352510D7B9E /* PBXTargetDependency */,
 			);
 			name = ShhhcribbleiOS;
 			packageProductDependencies = (
@@ -412,6 +476,10 @@
 						DevelopmentTeam = 9W82X49JZS;
 						ProvisioningStyle = Automatic;
 					};
+					AA350CA80DA32C360C0ADF61 = {
+						DevelopmentTeam = 9W82X49JZS;
+						ProvisioningStyle = Automatic;
+					};
 					DE176CCB7BED07C6C8FE235C = {
 						DevelopmentTeam = 9W82X49JZS;
 						ProvisioningStyle = Automatic;
@@ -435,6 +503,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				AA350CA80DA32C360C0ADF61 /* ShhhcribbleKeyboard */,
 				74608F668B94B346DC387D22 /* ShhhcribbleShared */,
 				A3732092429E475F577BF59D /* ShhhcribbleWidget */,
 				DE176CCB7BED07C6C8FE235C /* ShhhcribbleiOS */,
@@ -479,7 +548,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB02C5FB2849D2331C7FC812 /* KeyboardBridge.swift in Sources */,
 				EF9177A7A384C62B39C1EC48 /* ShhhcribbleActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C8D56F1C1833618AED3EA11 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82D25E7788D3FA316053B15D /* KeyboardRootView.swift in Sources */,
+				D82DDEAA89E30B8359D041B9 /* KeyboardViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -535,6 +614,16 @@
 			target = A3732092429E475F577BF59D /* ShhhcribbleWidget */;
 			targetProxy = 84A66364BFAEE4D7BD6EC6C7 /* PBXContainerItemProxy */;
 		};
+		9727724276557D00FF05C7CE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 74608F668B94B346DC387D22 /* ShhhcribbleShared */;
+			targetProxy = 5A17F4B2866693941A192A5E /* PBXContainerItemProxy */;
+		};
+		C0395625B72D2352510D7B9E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA350CA80DA32C360C0ADF61 /* ShhhcribbleKeyboard */;
+			targetProxy = 0B95250727585CEE643DA99F /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -554,6 +643,29 @@
 					"@executable_path/../../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.widget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		5C29B1C1079F63E553B4CCE7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShhhcribbleKeyboard/ShhhcribbleKeyboard.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9W82X49JZS;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShhhcribbleKeyboard/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.keyboard;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -611,6 +723,29 @@
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
+		};
+		8BD7CBD516C2BF389C88739C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ShhhcribbleKeyboard/ShhhcribbleKeyboard.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9W82X49JZS;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShhhcribbleKeyboard/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.keyboard;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
 		};
 		92861ADCAEE7AABFDC0CDD00 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -808,6 +943,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3BE5B4A224A0A4031ABF02B2 /* Build configuration list for PBXNativeTarget "ShhhcribbleKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BD7CBD516C2BF389C88739C /* Debug */,
+				5C29B1C1079F63E553B4CCE7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		5234145D28D916F1B5F5A429 /* Build configuration list for PBXNativeTarget "ShhhcribbleShared" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

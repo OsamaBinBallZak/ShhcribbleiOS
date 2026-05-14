@@ -1,12 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
    LastUpgradeVersion = "1430"
+   wasCreatedForAppExtension = "YES"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       runPostActionsOnFailure = "NO">
       <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AA350CA80DA32C360C0ADF61"
+               BuildableName = "ShhhcribbleKeyboard.appex"
+               BlueprintName = "ShhhcribbleKeyboard"
+               ReferencedContainer = "container:ShhhcribbleiOS.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
          <BuildActionEntry
             buildForTesting = "YES"
             buildForRunning = "YES"
@@ -60,9 +75,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "74608F668B94B346DC387D22"
-            BuildableName = "ShhhcribbleShared.framework"
-            BlueprintName = "ShhhcribbleShared"
+            BlueprintIdentifier = "AA350CA80DA32C360C0ADF61"
+            BuildableName = "ShhhcribbleKeyboard.appex"
+            BlueprintName = "ShhhcribbleKeyboard"
             ReferencedContainer = "container:ShhhcribbleiOS.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -73,23 +88,25 @@
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
-      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
-      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      selectedDebuggerIdentifier = ""
+      selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
       launchStyle = "0"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
       debugDocumentVersioning = "YES"
       debugServiceExtension = "internal"
-      allowLocationSimulation = "YES">
-      <MacroExpansion>
+      allowLocationSimulation = "YES"
+      launchAutomaticallySubstyle = "2">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "74608F668B94B346DC387D22"
-            BuildableName = "ShhhcribbleShared.framework"
-            BlueprintName = "ShhhcribbleShared"
+            BlueprintIdentifier = "AA350CA80DA32C360C0ADF61"
+            BuildableName = "ShhhcribbleKeyboard.appex"
+            BlueprintName = "ShhhcribbleKeyboard"
             ReferencedContainer = "container:ShhhcribbleiOS.xcodeproj">
          </BuildableReference>
-      </MacroExpansion>
+      </BuildableProductRunnable>
       <CommandLineArguments>
       </CommandLineArguments>
    </LaunchAction>
@@ -99,17 +116,18 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
-      <CommandLineArguments>
-      </CommandLineArguments>
-      <MacroExpansion>
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "74608F668B94B346DC387D22"
-            BuildableName = "ShhhcribbleShared.framework"
-            BlueprintName = "ShhhcribbleShared"
+            BlueprintIdentifier = "AA350CA80DA32C360C0ADF61"
+            BuildableName = "ShhhcribbleKeyboard.appex"
+            BlueprintName = "ShhhcribbleKeyboard"
             ReferencedContainer = "container:ShhhcribbleiOS.xcodeproj">
          </BuildableReference>
-      </MacroExpansion>
+      </BuildableProductRunnable>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">

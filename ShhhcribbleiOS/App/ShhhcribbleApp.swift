@@ -5,6 +5,14 @@ import os
 
 private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "app")
 
+/// CFNotificationCenter observer tokens must point to a stable address.
+/// We can't use `self` here because `ShhhcribbleApp` is a value type and
+/// its `init` references would be unstable. Use a static class anchor.
+private final class KeyboardDarwinAnchor {
+    static let shared = KeyboardDarwinAnchor()
+    private init() {}
+}
+
 @main
 struct ShhhcribbleApp: App {
     @StateObject private var status = TranscriptionStatus.shared
@@ -57,6 +65,87 @@ struct ShhhcribbleApp: App {
         Task { @MainActor in
             ShhhcribbleActivityManager.shared.reapOrphanedActivities()
         }
+
+        // Keyboard-extension push-to-talk plumbing. While the main app is
+        // alive, heartbeat to the App Group so the keyboard knows it can
+        // use the warm path (Darwin notification only — no app launch).
+        KeyboardBridge.heartbeat()
+        let initialReadback = KeyboardBridge.defaults?.object(forKey: "keyboard.engineKeepAlive")
+        print("[Shhhcribble] init heartbeat written, readback=\(String(describing: initialReadback)), appGroupID=\(KeyboardBridge.appGroupID), defaults=\(KeyboardBridge.defaults == nil ? "NIL" : "OK")")
+        Task.detached(priority: .background) {
+            var n = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                KeyboardBridge.heartbeat()
+                n += 1
+                if n % 2 == 0 {
+                    print("[Shhhcribble] heartbeat tick \(n)")
+                }
+            }
+        }
+        startKeyboardSignalPolling()
+    }
+
+    /// Poll the App Group every 100 ms for keyboard PTT signals. We
+    /// confirmed Darwin notifications don't cross the extension/app
+    /// sandbox boundary on iOS 26 — this is the fallback.
+    private func startKeyboardSignalPolling() {
+        Task.detached(priority: .userInitiated) {
+            var lastSeen: Date? = nil
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let signal = KeyboardBridge.readPTTSignal() else { continue }
+                if let prev = lastSeen, signal.at <= prev { continue }
+                lastSeen = signal.at
+                print("[Shhhcribble] PTT signal: \(signal.signal.rawValue) at \(signal.at)")
+                switch signal.signal {
+                case .start:
+                    Task.detached(priority: .userInitiated) {
+                        do {
+                            try await TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)
+                        } catch {
+                            print("[Shhhcribble] PTT start -> recordAndTranscribe failed: \(error)")
+                        }
+                    }
+                case .stop:
+                    Task.detached(priority: .userInitiated) {
+                        await TranscriptionService.shared.stopRecording()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Registered once at launch. Survives backgrounding — Darwin
+    /// notifications wake the process briefly even while suspended,
+    /// long enough for the audio session to claim and start recording.
+    private func registerKeyboardDarwinObservers() {
+        let token = Unmanaged.passUnretained(KeyboardDarwinAnchor.shared).toOpaque()
+
+        KeyboardBridge.observeDarwin(
+            KeyboardBridge.darwinStart,
+            observer: UnsafeRawPointer(token)
+        ) { _, _, _, _, _ in
+            print("[Shhhcribble] darwinStart received")
+            Task.detached(priority: .userInitiated) {
+                do {
+                    try await TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)
+                } catch {
+                    print("[Shhhcribble] darwinStart -> recordAndTranscribe failed: \(error)")
+                }
+            }
+        }
+
+        KeyboardBridge.observeDarwin(
+            KeyboardBridge.darwinStop,
+            observer: UnsafeRawPointer(token)
+        ) { _, _, _, _, _ in
+            print("[Shhhcribble] darwinStop received")
+            Task.detached(priority: .userInitiated) {
+                await TranscriptionService.shared.stopRecording()
+            }
+        }
+        print("[Shhhcribble] Darwin observers registered")
     }
 
     var body: some Scene {
@@ -100,26 +189,38 @@ struct ShhhcribbleApp: App {
 
         switch action {
         case "record":
-            guard !status.isRecording else { return }
-            // Flip synchronously so the overlay covers the launch flash before
-            // the actor hop inside recordAndTranscribe can update it.
-            status.setPhase(.recording)
-            status.launchedViaURL = true
-            Task {
-                do {
-                    try await TranscriptionService.shared.recordAndTranscribe()
-                } catch {
-                    await MainActor.run {
-                        if status.phase == .recording { status.setPhase(.idle) }
-                        status.launchedViaURL = false
-                    }
-                }
-            }
+            startURLLaunchedRecording(trigger: .manual)
+        case "record-from-keyboard":
+            // Keyboard extension wrote KeyboardBridge.Signal.startRecording
+            // and then called extensionContext.open(recordURL) — we land
+            // here. Trigger source `.keyboard` flags commit() to write the
+            // transcript back to the App Group container instead of (or
+            // in addition to) the clipboard, so the keyboard can pick it
+            // up on the user's return.
+            startURLLaunchedRecording(trigger: .keyboard)
         case "stop":
             status.launchedViaURL = true
             Task { await TranscriptionService.shared.stopRecording() }
         default:
             break
+        }
+    }
+
+    private func startURLLaunchedRecording(trigger: TriggerSource) {
+        guard !status.isRecording else { return }
+        // Flip synchronously so the overlay covers the launch flash before
+        // the actor hop inside recordAndTranscribe can update it.
+        status.setPhase(.recording)
+        status.launchedViaURL = true
+        Task {
+            do {
+                try await TranscriptionService.shared.recordAndTranscribe(trigger: trigger)
+            } catch {
+                await MainActor.run {
+                    if status.phase == .recording { status.setPhase(.idle) }
+                    status.launchedViaURL = false
+                }
+            }
         }
     }
 }
