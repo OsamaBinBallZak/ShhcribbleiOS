@@ -21,6 +21,12 @@ struct ShhhcribbleApp: App {
 
     init() {
         AudioSessionManager.shared.configure()
+        // Warm mode disabled — `.playAndRecord` with a silent player
+        // engine corrupts the input node format on iOS 26 (crashes in
+        // installTap with IsFormatSampleRateAndChannelCountValid).
+        // For now the app gets suspended after backgrounding and the
+        // keyboard's warm path doesn't survive that. To be fixed in a
+        // follow-up with a different keepalive strategy.
         AudioInterruptionObserver.shared.start()
         StopRecordingIntent.performer = {
             await TranscriptionService.shared.stopRecording()
@@ -83,6 +89,11 @@ struct ShhhcribbleApp: App {
                 }
             }
         }
+        // Both transports run concurrently: Darwin for low-latency wake,
+        // App Group polling for redundancy. With warm mode keeping the app
+        // alive, both should work; the first to arrive wins (start/stop is
+        // idempotent in the actor — guard at top of recordAndTranscribe).
+        registerKeyboardDarwinObservers()
         startKeyboardSignalPolling()
     }
 
@@ -91,7 +102,11 @@ struct ShhhcribbleApp: App {
     /// sandbox boundary on iOS 26 — this is the fallback.
     private func startKeyboardSignalPolling() {
         Task.detached(priority: .userInitiated) {
-            var lastSeen: Date? = nil
+            // Seed lastSeen with whatever's already in the App Group so we
+            // don't fire a phantom recording from a stale signal left over
+            // from a previous app run.
+            var lastSeen: Date? = KeyboardBridge.readPTTSignal()?.at ?? Date()
+            print("[Shhhcribble] PTT polling started, ignoring signals at or before \(String(describing: lastSeen))")
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard let signal = KeyboardBridge.readPTTSignal() else { continue }

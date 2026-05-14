@@ -67,13 +67,19 @@ final class AudioRecorder {
     private func installTapAndStart() throws {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
+        print("[Shhhcribble] AudioRecorder input format: sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
 
+        var bufferCount = 0
         // Buffer size 0 lets AVAudioEngine pick its natural delivery size.
         // Hardcoding (e.g. 2560) silently truncates trailing audio on AirPods
         // because they deliver variable-size stereo buffers; pre-sized taps
         // can clip the last frames of an utterance.
         inputNode.installTap(onBus: 0, bufferSize: 0, format: format) { [weak self] buffer, _ in
             guard let self else { return }
+            bufferCount += 1
+            if bufferCount == 1 || bufferCount == 10 {
+                print("[Shhhcribble] AudioRecorder buffer #\(bufferCount) frameLength=\(buffer.frameLength)")
+            }
 
             // RMS for the audio level visualizer — read directly off the
             // tap-owned buffer; we don't need a copy for this.

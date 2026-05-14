@@ -85,13 +85,19 @@ final class KeyboardViewController: UIInputViewController {
             state.refresh()
             return
         }
+        // Post Darwin first (fastest path when both processes are alive),
+        // then write App Group signal as a polling fallback in case the
+        // Darwin observer fires before the recipient registered or got
+        // dropped. Main app's start handler is idempotent.
+        KeyboardBridge.postDarwin(KeyboardBridge.darwinStart)
         KeyboardBridge.writePTTSignal(.start)
-        diagLog.notice("wrote PTT start signal")
+        diagLog.notice("posted darwinStart + wrote PTT start signal")
     }
 
     private func handlePushToTalkEnd() {
+        KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
         KeyboardBridge.writePTTSignal(.stop)
-        diagLog.notice("wrote PTT stop signal")
+        diagLog.notice("posted darwinStop + wrote PTT stop signal")
         state.isTranscribing = true
     }
 

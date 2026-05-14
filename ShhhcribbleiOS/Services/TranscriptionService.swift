@@ -459,6 +459,14 @@ actor TranscriptionService {
         }
         self.bgTaskId = taskId
         await TranscriptionStatus.shared.event("Triggered")
+        // Pause the warm-mode silent engine for the duration of the real
+        // recording. Both engines compete for the .playAndRecord session
+        // and the silent player starves the mic input tap — confirmed
+        // empirically (recording yields empty transcript while warm
+        // engine is running).
+        await MainActor.run {
+            AudioSessionManager.shared.pauseWarmEngine()
+        }
         await setUIRecording(true)
         let activityOK = await MainActor.run { ShhhcribbleActivityManager.shared.start() }
         if !activityOK {
@@ -471,6 +479,11 @@ actor TranscriptionService {
             appendTargetId = nil
             let endId = self.bgTaskId
             self.bgTaskId = .invalid
+            // Resume the warm engine so the keyboard stays warm for the
+            // next push-to-talk.
+            Task { @MainActor in
+                AudioSessionManager.shared.resumeWarmEngine()
+            }
             Task { @MainActor in
                 // Only collapse to .idle if we're still mid-recording; if a
                 // branch already moved us to .noSpeech or .error, leave that
@@ -624,8 +637,12 @@ actor TranscriptionService {
                 TranscriptionStatus.shared.launchedViaURL = false
                 ToastManager.shared.show("No speech detected", systemImage: "waveform.slash")
             }
-            // Phase collapses to .idle via the defer block; the toast carries
-            // the user feedback. No haptic, no clipboard write, no Note saved.
+            // Even on empty, wake the keyboard so its spinner clears and the
+            // UI returns to the mic button. Otherwise the keyboard hangs in
+            // "Transcribing…" until its 1-second poll catches up.
+            if currentTrigger == .keyboard {
+                KeyboardBridge.postDarwin(KeyboardBridge.darwinTranscriptReady)
+            }
             return
         }
 
