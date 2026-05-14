@@ -40,7 +40,7 @@ targets:
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: L9T3PX7HVH
+        DEVELOPMENT_TEAM: 9W82X49JZS
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
         DEFINES_MODULE: YES
@@ -79,11 +79,11 @@ targets:
           - UIInterfaceOrientationPortrait
     entitlements:
       path: ShhhcribbleiOS/ShhhcribbleiOS.entitlements
-      properties: {}
-      # NOTE: App Group `group.com.shhhcribble` was temporarily removed so
-      # the project can sign with a free Personal Team for device testing.
-      # Restore before adding the keyboard extension in Sprint 5 — the
-      # keyboard extension and main app share state via this group.
+      properties:
+        com.apple.security.application-groups:
+          - group.com.shhhcribble
+      # App Group restored 2026-05-14 alongside paid Developer Program
+      # enrolment (team 9W82X49JZS) ahead of Sprint 5 keyboard extension.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble
@@ -91,7 +91,7 @@ targets:
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: L9T3PX7HVH
+        DEVELOPMENT_TEAM: 9W82X49JZS
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         GENERATE_INFOPLIST_FILE: NO
     dependencies:
@@ -129,7 +129,9 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
       path: ShhhcribbleWidget/ShhhcribbleWidget.entitlements
-      properties: {}
+      properties:
+        com.apple.security.application-groups:
+          - group.com.shhhcribble
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble.widget
@@ -137,7 +139,7 @@ targets:
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: L9T3PX7HVH
+        DEVELOPMENT_TEAM: 9W82X49JZS
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES

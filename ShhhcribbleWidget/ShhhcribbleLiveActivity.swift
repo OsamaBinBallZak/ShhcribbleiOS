@@ -7,17 +7,11 @@ import WidgetKit
 private let brandBlue = Color(red: 0.25, green: 0.55, blue: 1.0)
 private let pillBackground = Color(red: 0.10, green: 0.10, blue: 0.12)
 
-// URL scheme used by the Live Activity to open the app on tap. The main
-// app's URL handler treats unknown actions (anything other than "record" /
-// "stop") as a no-op — opening the app is the entire goal here.
-private let openAppURL = URL(string: "shhhcribble://open")!
-
 struct ShhhcribbleLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ShhhcribbleActivityAttributes.self) { context in
-            // Lock-screen / banner layout. Whole card is tappable via
-            // .widgetURL — taps open the app where the user can stop the
-            // recording from the in-app overlay.
+            // Lock-screen / banner layout. Per-button intents route into the
+            // main app via App Group (restored 2026-05-14).
             HStack(spacing: 12) {
                 AnimatedWaveform(size: 22)
                     .frame(width: 28)
@@ -39,19 +33,19 @@ struct ShhhcribbleLiveActivity: Widget {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Decorative Stop badge — visual only. Tapping anywhere on
-                // the card opens the app (see .widgetURL below).
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 32, height: 32)
-                    .background(Circle().fill(brandBlue))
+                Button(intent: StopRecordingIntent()) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(brandBlue))
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .activityBackgroundTint(pillBackground)
             .activitySystemActionForegroundColor(Color.white)
-            .widgetURL(openAppURL)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -63,12 +57,14 @@ struct ShhhcribbleLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    // Decorative Stop badge.
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(brandBlue))
+                    Button(intent: StopRecordingIntent()) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(brandBlue))
+                    }
+                    .buttonStyle(.plain)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(timerInterval: context.state.startedAt...Date.distantFuture,
@@ -97,7 +93,6 @@ struct ShhhcribbleLiveActivity: Widget {
                 AnimatedWaveform(size: 14)
             }
             .keylineTint(brandBlue)
-            .widgetURL(openAppURL)
         }
     }
 }
