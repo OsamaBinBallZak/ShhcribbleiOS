@@ -483,6 +483,15 @@ actor TranscriptionService {
         }
         AudioInterruptionObserver.shared.recordingDidStart()
 
+        // For keyboard-triggered recordings, snapshot the user's existing
+        // clipboard so we can restore it after autopaste — they didn't ask
+        // us to clobber it just by holding the keyboard's mic. In-app
+        // recordings deliberately leave the transcript on the clipboard
+        // (see Hendri's CLAUDE.md note "ClipboardService is keyboard-only").
+        if trigger == .keyboard {
+            await ClipboardService.shared.snapshot()
+        }
+
         // No clipboard snapshot/restore in the in-app flow — the user's
         // clipboard gets replaced by the transcript and stays there. Restore
         // is reserved for the Sprint 5 keyboard-extension autopaste path,
@@ -812,13 +821,19 @@ actor TranscriptionService {
         UIPasteboard.general.string = text
         if trigger == .keyboard {
             // Write to App Group so the keyboard extension can pick it up
-            // and inject via UITextDocumentProxy when the user switches
-            // back to the host text field. Darwin notification wakes the
-            // keyboard's observer immediately if it's still active; the
-            // textDidChange / viewDidAppear fallback covers the case
-            // where the keyboard was suspended.
+            // and inject via UITextDocumentProxy when the user returns to
+            // the host text field. Darwin notification wakes the keyboard's
+            // observer immediately; the timer-based poll + textDidChange
+            // covers the case where the extension was suspended.
             KeyboardBridge.writeTranscript(text)
             KeyboardBridge.postDarwin(KeyboardBridge.darwinTranscriptReady)
+            // Restore the user's original clipboard after 2 s so the
+            // transcript is briefly pasteable as a fallback (if
+            // `textDocumentProxy.insertText` is silently dropped by the
+            // host app), then their prior content comes back. Skipped if
+            // they manually copied something else in the meantime —
+            // `scheduleRestore` checks the changeCount before restoring.
+            Task { await ClipboardService.shared.scheduleRestore(after: 2.0) }
         }
         if let id = appendingTo {
             NotesRepository.shared.append(transcript: text, to: id)

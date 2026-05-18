@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage("filterFillerWords") private var filterFillerWords = true
     @AppStorage("useANE") private var useANE = true
     @AppStorage("asrMode") private var asrModeRaw = AsrMode.streaming.rawValue
+    @AppStorage("keepKeyboardReady") private var keepKeyboardReady = true
     // TODO: remove after onboarding QA — see plan silly-karp
     @AppStorage("onboardingComplete") private var onboardingComplete: Bool = false
     @ObservedObject private var status = TranscriptionStatus.shared
@@ -31,6 +32,7 @@ struct SettingsView: View {
 
                 Form {
                     transcriptionStyleSection
+                    keyboardSection
                     vocabularySection
                     performanceSection
                     permissionsSection
@@ -133,6 +135,23 @@ struct SettingsView: View {
             Text("Performance")
         } footer: {
             Text("Runs the transcription model on Apple's Neural Engine for faster performance and lower battery use. Disable only if you experience issues.")
+        }
+    }
+
+    private var keyboardSection: some View {
+        Section {
+            Toggle("Keep keyboard ready", isOn: $keepKeyboardReady)
+                .onChange(of: keepKeyboardReady) { _, newValue in
+                    if newValue {
+                        AudioSessionManager.shared.enterWarmMode()
+                    } else {
+                        AudioSessionManager.shared.exitWarmMode()
+                    }
+                }
+        } header: {
+            Text("Keyboard")
+        } footer: {
+            Text("When on, the Shhhcribble keyboard's push-to-talk button records and inserts text instantly — no app switch. iOS shows a small orange dot in the status bar while this is on (Apple's privacy indicator; required for instant recording). Turn off if you don't use the keyboard or prefer the dot only during active recordings.")
         }
     }
 

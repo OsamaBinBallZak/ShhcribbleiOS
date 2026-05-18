@@ -16,8 +16,10 @@ struct OnboardingView: View {
                     .tag(0)
                 ControlCenterPage(accent: accent, onNext: { advance() })
                     .tag(1)
-                TriggersPage(accent: accent, onFinish: { finish() })
+                TriggersPage(accent: accent, onNext: { advance() })
                     .tag(2)
+                KeyboardPage(accent: accent, onFinish: { finish() })
+                    .tag(3)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
@@ -31,7 +33,7 @@ struct OnboardingView: View {
     }
 
     private func advance() {
-        withAnimation(.easeInOut(duration: 0.25)) { page = min(page + 1, 2) }
+        withAnimation(.easeInOut(duration: 0.25)) { page = min(page + 1, 3) }
     }
 
     private func finish() {
@@ -95,14 +97,14 @@ private struct ControlCenterPage: View {
 
 private struct TriggersPage: View {
     let accent: Color
-    let onFinish: () -> Void
+    let onNext: () -> Void
 
     var body: some View {
         OnboardingPageScaffold(
             symbol: "hand.tap.fill",
             symbolColor: accent,
             title: "Other ways to start",
-            primaryButton: ("Get Started", onFinish),
+            primaryButton: ("Next", onNext),
             primaryTint: accent
         ) {
             VStack(alignment: .leading, spacing: 16) {
@@ -127,6 +129,51 @@ private struct TriggersPage: View {
                         detail: "First add \"Start Shhhcribble\" to your library in the Shortcuts app. Then Settings → Accessibility → Touch → Back Tap → pick it under Shortcuts."
                     )
                 }
+            }
+        }
+    }
+}
+
+private struct KeyboardPage: View {
+    let accent: Color
+    let onFinish: () -> Void
+
+    var body: some View {
+        OnboardingPageScaffold(
+            symbol: "keyboard.fill",
+            symbolColor: accent,
+            title: "Dictate from any app",
+            primaryButton: ("Get Started", onFinish),
+            primaryTint: accent
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("The Shhhcribble keyboard adds a push-to-talk mic next to your text. Hold it, speak, release — the transcript drops straight into the text field.")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    NumberedStep(
+                        number: 1,
+                        text: "Settings → General → Keyboard → Keyboards → Add New Keyboard → Shhhcribble."
+                    )
+                    NumberedStep(
+                        number: 2,
+                        text: "Tap Shhhcribble in the list, then enable Allow Full Access. Required to send the transcript back to your text field."
+                    )
+                    NumberedStep(
+                        number: 3,
+                        text: "In any text field, long-press the globe to switch to Shhhcribble. Hold the blue mic to dictate."
+                    )
+                }
+
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(accent)
+                    Text("iOS shows a small orange dot in the status bar while Shhhcribble keeps the mic ready for instant dictation. You can disable this in Settings → Keyboard, at the cost of slower keyboard recordings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
             }
         }
     }
