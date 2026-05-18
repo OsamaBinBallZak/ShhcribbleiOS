@@ -28,6 +28,9 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     branch: main
+  KeyboardKit:
+    url: https://github.com/KeyboardKit/KeyboardKit.git
+    from: "9.0.0"
 
 targets:
   ShhhcribbleShared:
@@ -150,6 +153,9 @@ targets:
       - target: ShhhcribbleShared
         embed: false
 
+  # Keyboard target depends on KeyboardKit for the Apple-look-alike key layout.
+  # See ShhhcribbleKeyboard target below; FluidAudio is NOT pulled into the
+  # keyboard extension (model lives in main app — 70 MB extension cap).
   ShhhcribbleKeyboard:
     type: app-extension
     platform: iOS
@@ -193,3 +199,5 @@ targets:
     dependencies:
       - target: ShhhcribbleShared
         embed: false
+      - package: KeyboardKit
+        product: KeyboardKit

@@ -26,6 +26,7 @@
 		6375D73C63BE966EE67C623A /* String+Substitutions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78E2494F7C979E52B94887C1 /* String+Substitutions.swift */; };
 		67197467491D7E91CDD42A25 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */; };
 		7485596D89D91B4F32AB7402 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D1BE8FC5BFF46DBFE2BC0EA8 /* FluidAudio */; };
+		7F08B2964583055AF2F18C6A /* KeyboardKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE98113653B9CE4007AD261B /* KeyboardKit */; };
 		7F7E72E500EF1FBCB19F272B /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		8296F9A45D14F85C84C36697 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF932B842F1D3FF7670E760F /* Assets.xcassets */; };
 		82D25E7788D3FA316053B15D /* KeyboardRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FC191D0172714C04A3D24F /* KeyboardRootView.swift */; };
@@ -177,6 +178,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				181A81091C8A4187821BC287 /* ShhhcribbleShared.framework in Frameworks */,
+				7F08B2964583055AF2F18C6A /* KeyboardKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -429,6 +431,7 @@
 			);
 			name = ShhhcribbleKeyboard;
 			packageProductDependencies = (
+				FE98113653B9CE4007AD261B /* KeyboardKit */,
 			);
 			productName = ShhhcribbleKeyboard;
 			productReference = 6FF0AD71DEC82E94A00B443D /* ShhhcribbleKeyboard.appex */;
@@ -497,6 +500,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				54CB516DB1FEBE4B04A541AE /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				62AF529CF6BCCDF079D631B9 /* XCRemoteSwiftPackageReference "KeyboardKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 86E0F2356E0D1B979EA3C534 /* Products */;
@@ -999,6 +1003,14 @@
 				kind = branch;
 			};
 		};
+		62AF529CF6BCCDF079D631B9 /* XCRemoteSwiftPackageReference "KeyboardKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/KeyboardKit/KeyboardKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1006,6 +1018,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 54CB516DB1FEBE4B04A541AE /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
+		};
+		FE98113653B9CE4007AD261B /* KeyboardKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 62AF529CF6BCCDF079D631B9 /* XCRemoteSwiftPackageReference "KeyboardKit" */;
+			productName = KeyboardKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
