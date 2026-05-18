@@ -1,141 +1,109 @@
-# Sprint 5 Handoff — Universal Links setup (Phase H)
+# Sprint 5 Handoff — Path B is the shipping path
 
-*Last session ended 2026-05-18 with the decision to attempt Universal Links via GitHub Pages to bypass the iOS 26 "Open in app" confirmation prompt that's killing the keyboard's Voice button.*
+*Updated 2026-05-18 after Phase H (Universal Links) was empirically ruled out and Path B (always-warm + orange mic) was verified end-to-end on device.*
 
-If you're a fresh agent picking this up: **read SPRINT5_REPORT.md first** for the historical context. Then this file for the current state and your immediate task.
+If you're a fresh agent picking this up: **read SPRINT5_REPORT.md first** for the Sprint 5 historical context, then this file for current state.
+
+---
+
+## TL;DR
+
+The keyboard's Voice button works **without an app switch** when the user sets Settings → "Keep keyboard ready for" → **"Always (mic indicator stays on)"**. Tap mic, speak, transcript appears in the host app's text field. Verified on iPhone 13, iOS 26.4.2, 2026-05-18.
+
+Trade-off: a permanent orange mic indicator in the status bar (Apple's privacy badge for active audio sessions). This is the same trade-off no shipping iOS dictation keyboard has been willing to take — Wispr Flow, Superwhisper, and friends all accept the app-switch instead. Shhhcribble going the other way is a deliberate UX choice.
 
 ---
 
 ## What works today
 
-- Hand-rolled QWERTY keyboard installs cleanly, appears in Settings → Keyboards, accepts typing in any text field. User has typed full sentences with it.
+- Hand-rolled QWERTY keyboard installs cleanly, appears in Settings → Keyboards, accepts typing in any text field.
 - In-app recording (play FAB) records and transcribes correctly.
 - Lock-screen Live Activity Stop button commits without unlocking the phone.
 - App Group, paid Developer Program signing, Darwin notifications + App Group polling are all wired and working.
-- Warm mode (single-engine `AVAudioEngine` with silent player keeping the session active) was previously verified end-to-end before we switched to per-session mode.
-- Settings → Keyboard has a duration picker (30s / 1 min / 5 min / Always). Default 1 minute.
+- **Always-warm mode + in-keyboard PTT verified end-to-end on device (2026-05-18).** Settings → Keyboard → "Always (mic indicator stays on)" → background app → open Notes → tap Voice button → speak → tap Stop → transcript inserts into Notes. No app switch.
+- The codebase already has a single shared `AVAudioEngine` between warm-mode keepalive and `AudioRecorder` — SPRINT5_REPORT's Bug 2 (`IsFormatSampleRateAndChannelCountValid`) is resolved.
 
-## What's broken — the only remaining blocker
+## What's broken — and why we can't fix it
 
-The **Voice button in the keyboard toolbar** can't open the containing app on iOS 26. iOS 26 added a confirmation prompt (`"Open in Shhhcribble?"`) before allowing custom URL scheme opens between apps. Keyboard extensions can't display that prompt, so `extensionContext.open(shhhcribble://record-from-keyboard)` silently returns `success=false`. We tried the responder-chain `openURL:` selector fallback — UIApplication accepts the selector at hop 10 but iOS silently drops the actual open.
+The keyboard's cold-start path (when warm mode is OFF or expired) cannot reliably wake the containing app on iOS 26.4. We tried two transports and both fail:
 
-**Confirmed:** SuperWhisper (the reference implementation) doesn't have a magic workaround — `curl https://superwhisper.com/.well-known/apple-app-site-association` returns 404, so they're not using Universal Links either. Their App Store reviews complain about the same screen-switching pain and they offer a Shortcuts-based workaround.
+- **Custom URL scheme** (`shhhcribble://record-from-keyboard` via `extensionContext.open`) — silently returns `success=false`. The responder-chain `openURL:` selector fallback also fails silently (UIKit-logged "BUG IN CLIENT OF UIKIT" since iOS 18; per KeyboardKit's writeup, definitively dead).
+- **Universal Links** — see Phase H below.
 
-## The plan: Universal Links via GitHub Pages
+Workarounds within iOS 26.4 are limited to:
+1. Always-warm mode (Path B, shipping path).
+2. App-switch UX (Path A, what every competitor ships).
 
-Universal Links are HTTPS URLs registered to your app via an `apple-app-site-association` (AASA) file hosted on a domain you control. iOS treats them as web links, so **no confirmation prompt fires**. Once iOS has fetched the AASA at install (or shortly after), Universal Links work **fully offline** — iOS uses the cached AASA to decide which app to open. User asked this and the answer matters: yes, the mountain-cabin scenario works.
+---
 
-### Setup steps (in order)
+## Phase H — Universal Links: empirically ruled out 2026-05-18
 
-#### 1. Create a GitHub Pages repo for the AASA file
+The theory: `extensionContext.open(HTTPS_URL)` from a keyboard would route via Universal Link instead of falling under the custom-scheme restriction, because iOS treats AASA-registered HTTPS URLs as web links.
 
-The user has a personal GitHub. Easiest path:
+We built it:
+- Created `OsamaBinBallZak/shhhcribble-aasa` on GitHub Pages, hosting `.well-known/apple-app-site-association` (with `.nojekyll` so the dotfile dir is served).
+- Added `com.apple.developer.associated-domains: applinks:osamabinballzak.github.io?mode=developer` to the main app entitlement.
+- Added `.onContinueUserActivity(NSUserActivityTypeBrowsingWeb)` handler in `ShhhcribbleApp.swift`.
+- Pointed `KeyboardBridge.recordURL` at the HTTPS URL.
+- Enabled Settings → Developer → Universal Links → Associated Domains Development (forces direct host fetch, bypassing Apple's CDN).
 
-- Create a new repo: `tiurihartog/shhhcribble-aasa` (or similar)
-- Enable GitHub Pages in repo settings → source: `main` branch, root
-- Create one file: `.well-known/apple-app-site-association` (NO `.json` extension)
-- File contents:
-  ```json
-  {
-    "applinks": {
-      "details": [
-        {
-          "appIDs": ["9W82X49JZS.com.hendrivanniekerk.shhhcribble"],
-          "components": [
-            { "/": "/keyboard/*" }
-          ]
-        }
-      ]
-    }
-  }
-  ```
-  Team ID `9W82X49JZS` is the user's paid Apple Developer Program team. Bundle ID is the main app's (NOT the keyboard's — Universal Links route to the containing app).
+Result:
+- `extensionContext.open(HTTPS URL)` from keyboard still returns `success=false` (logged on device).
+- Tapping the same URL in Apple Notes opens **Safari**, not Shhhcribble — iOS does not register the AASA as Universal-Link-claimed despite developer mode.
+- Apple's CDN (`app-site-association.cdn-apple.com/a/v1/osamabinballzak.github.io`) returns 404 for our domain. Apple's CDN learns about domains gradually as apps using them get installed. New domains may take days/weeks/never.
 
-- Verify the file is served correctly: `curl -sSL -w "\n%{content_type}\n" https://tiurihartog.github.io/shhhcribble-aasa/.well-known/apple-app-site-association` — should return the JSON. Content-type may be `application/octet-stream` (GitHub Pages default) — Apple's CDN-validated path accepts this in practice. If it's served as HTML 404, the path is wrong; check that the file is named exactly `apple-app-site-association` with no extension.
+Phase H code has been reverted (commit baseline is `b1cb796`). The GitHub repo `OsamaBinBallZak/shhhcribble-aasa` and the `.well-known/apple-app-site-association` file are still up — harmless, costs nothing, leaves Phase H reproducible if Apple ever loosens the iOS 26 keyboard restriction.
 
-#### 2. Add Associated Domains entitlement to the main app
+**Don't re-investigate this path.** Two independent confirmations from research agents and one empirical device test all converged: keyboards cannot programmatically launch their container in iOS 26.4 regardless of URL scheme. Wispr Flow's iOS 26.4+ docs explicitly say "Apple requires Flow to briefly switch apps to activate the microphone."
 
-Edit `project.yml` — the `ShhhcribbleiOS` target's entitlements `properties` block:
+---
 
-```yaml
-    entitlements:
-      path: ShhhcribbleiOS/ShhhcribbleiOS.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - group.com.shhhcribble.app
-        com.apple.developer.associated-domains:
-          - applinks:tiurihartog.github.io
-```
+## Path B (the shipping path) — how it works
 
-(Use the exact domain from step 1. If you use a subpath like `tiurihartog.github.io/shhhcribble-aasa/keyboard/*`, the `applinks:` entry is just the bare host: `applinks:tiurihartog.github.io`.)
+Architecture, verified working:
 
-Also register the domain in the Apple Developer portal: developer.apple.com → Identifiers → `com.hendrivanniekerk.shhhcribble` → enable Associated Domains capability. May already be set after entitlement is in the build; verify via the portal.
+1. App launches. If `warmModeAlways=true` in `@AppStorage`, `AudioSessionManager.shared.enterWarmMode()` runs in `ShhhcribbleApp.init`. This:
+   - Sets `AVAudioSession.sharedInstance().category = .playAndRecord, mode = .measurement`.
+   - Activates the session.
+   - Spins up a single `AVAudioEngine` (`AudioSessionManager.warmEngine`) with an `AVAudioPlayerNode` looping a silent buffer attached to `mainMixerNode`. Volume = 0.
+   - iOS now classifies the app as "active audio" → status bar orange mic indicator on, process protected from suspension.
+2. While warm, a background task heartbeats `KeyboardBridge.heartbeat()` to App Group UserDefaults every 5s.
+3. Keyboard extension reads `KeyboardBridge.isEngineWarm` (true if heartbeat < 12s old). When warm, its Voice button is accent-coloured ("Ready").
+4. User taps Voice in keyboard. Keyboard writes `KeyboardBridge.writePTTSignal(.start)` to App Group UserDefaults.
+5. Main app's `startKeyboardSignalPolling()` task (in `ShhhcribbleApp`) polls App Group every 100ms, sees the new signal, calls `TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)`.
+6. Audio flows through the existing warm engine. `AudioRecorder` installs an input tap on `AudioSessionManager.shared.warmEngine.inputNode` (no second engine, no `setActive(true)` re-call — that's how Bug 2 was fixed).
+7. User taps Stop in keyboard. Keyboard writes `KeyboardBridge.writePTTSignal(.stop)`. Main app stops recording, finalises transcript.
+8. Main app writes transcript to `KeyboardBridge.writeTranscript(_:)` and posts the `darwinTranscriptReady` Darwin notification.
+9. Keyboard's `consumeAndInsertTranscriptIfReady` reads + clears the transcript and calls `textDocumentProxy.insertText(transcript)`. Transcript appears in the host app's text field.
 
-Then `xcodegen generate` to regenerate `.xcodeproj`.
+End-to-end with no app switch. Confirmed on iPhone 13, iOS 26.4.2.
 
-#### 3. Change `KeyboardBridge.recordURL` to the HTTPS URL
+## Path B — what's still missing before TestFlight
 
-In `ShhhcribbleShared/KeyboardBridge.swift`:
+These are polish-level, not blockers:
 
-```swift
-public static let recordURL = URL(string: "https://tiurihartog.github.io/shhhcribble-aasa/keyboard/record-from-keyboard")!
-```
+- **Onboarding should explain the orange-mic trade-off.** Users will see a permanent orange dot in their status bar after enabling Always mode and probably wonder why. `OnboardingView` should have a screen specifically calling this out, with copy along the lines of "Shhhcribble keeps a low-power mic session alive so the keyboard can dictate instantly. iOS shows a tiny orange dot in your status bar while it's active — nothing is being recorded or transmitted, this is iOS's standard privacy indicator. You can turn this off in Settings if you want a manual mode."
+- **The default should probably stay at "1 minute"** so first-time users don't get an unexplained orange mic before they've seen the explanation. After onboarding finishes (or in a dedicated onboarding step), prompt the user once: "Always (recommended): instant keyboard dictation, orange dot stays on" vs "Manual: tap to wake, no orange dot but one quick app open per session." Default to whatever they pick.
+- **AirPods reconnect during always-warm mode** has not been explicitly tested. `AudioSessionManager.handleRouteChange` rebuilds the warm engine on `AVAudioEngineConfigurationChange`, which should self-heal, but verify with: enable Always, pop one AirPod out mid-typing, do a keyboard recording, confirm it still captures. If it fails, look at `AudioRecorder`'s 200 ms re-install delay at line ~152.
+- **Phone call interruption.** `AudioInterruptionObserver` needs to call `AudioSessionManager.shared.reactivateAfterInterruption()` after `.ended`. Verify the wire-up — if missing, after a phone call the warm engine is dead and `isEngineWarm` goes false until the user reopens Shhhcribble.
+- **Battery impact unknown.** Similar apps report ~1–5%/hr with always-warm. Worth a 1h benchmark before TestFlight to set user expectations.
+- **Cold-start fallback when warm mode is OFF.** Currently broken on iOS 26.4 (no transport works). If a user picks 30s/1m/5m duration, the first dictation in a session opens the app via custom URL scheme — but the URL scheme is rejected by iOS 26.4. Two options: (a) hide the duration picker, ship Always-only with the orange mic; (b) keep the picker but be honest that 30s/1m/5m all require an app switch on the first dictation per session — and on iOS 26.4 the app switch never happens via URL scheme, so first dictation in a non-Always setting is currently silently broken. **Recommendation: hide the picker entirely, ship Always-only.**
 
-(Keep the path stable — it's what the `components` block matches against.)
+---
 
-#### 4. Handle the Universal Link in the main app
+## Recent commits
 
-The current URL handler in `ShhhcribbleiOS/App/ShhhcribbleApp.swift` is `.onOpenURL { url in handle(url: url) }` which handles custom URL schemes. Universal Links arrive via `.onContinueUserActivity(NSUserActivityTypeBrowsingWeb)`. Add it alongside the existing onOpenURL:
+Most recent: `b1cb796` — Sprint 5 handoff prior to Phase H attempt.
 
-```swift
-.onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-    guard let url = activity.webpageURL else { return }
-    // Reuse the same path-matching logic. Universal links arrive as
-    // https://tiurihartog.github.io/shhhcribble-aasa/keyboard/record-from-keyboard
-    if url.path.hasSuffix("/record-from-keyboard") {
-        if !AudioSessionManager.shared.warmModeActive {
-            AudioSessionManager.shared.enterWarmMode()
-        }
-        startURLLaunchedRecording(trigger: .keyboard)
-    }
-}
-```
+Before that:
+- `ee1d3c1` — Phase E (session mode) + Phase G (hand-rolled QWERTY)
+- `8d47d52` — Sprint 5 polish (clipboard restore + warm-mode toggle + onboarding)
+- `052ea71` — Sprint 5 working (single-engine warm + Task.cancel kill-switch)
+- `5b8dc9d` — Sprint 5 status report (SPRINT5_REPORT.md)
 
-#### 5. Test it
+This session's commit adds the Phase H rejection finding + Path B verification doc update only — no code changes (Phase H code was reverted).
 
-On device:
-- Force-quit Shhhcribble
-- Trigger a fresh install (`xcrun devicectl device install app …`)
-- Wait ~10 seconds for iOS to fetch the AASA (it happens silently in the background)
-- Launch Shhhcribble once to confirm it opens (no other action needed)
-- Background, switch to Notes
-- Tap the keyboard's Voice button
-
-If the Voice button now opens Shhhcribble: **Universal Links from a keyboard extension work in iOS 26**. You've outdone SuperWhisper. Ship it.
-
-If it still fails silently, see "If Universal Links don't work either" below.
-
-### Common pitfalls
-
-- **GitHub Pages serves AASA as `octet-stream`, not `application/json`.** Apple's docs say `application/json` is required, but in practice iOS accepts octet-stream. If validation fails, host on a domain with control over Content-Type (Cloudflare Workers, Vercel, your own server).
-- **AASA cache.** Once iOS has fetched a 404 or invalid AASA, it caches that result for a while. Trigger a refresh: delete app, reinstall.
-- **Team ID prefix.** The `appIDs` entry MUST be `<TEAM_ID>.<bundle_id>`. Wrong prefix = silent failure.
-- **Personal Team vs Paid Program.** User is on paid (`9W82X49JZS`). Associated Domains works there. Personal Team has restrictions; not relevant for the user's setup.
-- **Debugging AASA validation on device:** Settings → Developer → Universal Links → Diagnostics. (Developer menu only shows up if Xcode has been installed/connected at least once.)
-
-## If Universal Links don't work either
-
-Fall back to **Path B from the previous session's writeup**: tell the user to set the warm-mode duration to "Always" in Settings. They open Shhhcribble once after install, enable Always, accept the permanent orange mic indicator. From then on the keyboard's Voice button uses push-to-talk against the live engine — no app open needed.
-
-This is what SuperWhisper users seem to be doing in practice. Ship-quality even if it's not the dream UX.
-
-## Files you'll touch
-
-- `project.yml` (Associated Domains entitlement)
-- `ShhhcribbleiOS/ShhhcribbleiOS.entitlements` (regenerated by xcodegen)
-- `ShhhcribbleShared/KeyboardBridge.swift` (change `recordURL`)
-- `ShhhcribbleiOS/App/ShhhcribbleApp.swift` (add `.onContinueUserActivity`)
-- New repo on GitHub for the AASA file
+---
 
 ## Useful commands
 
@@ -157,30 +125,9 @@ xcrun devicectl device process launch \
   --device A9195A77-601A-54C1-B3BD-659FBFE1DC54 \
   --console --terminate-existing \
   com.hendrivanniekerk.shhhcribble
-
-# Curl the AASA to verify hosting
-curl -sSL -w "\n%{http_code} %{content_type}\n" \
-  https://tiurihartog.github.io/shhhcribble-aasa/.well-known/apple-app-site-association
-
-# Simulator (boot + install + open URL) — useful for verifying URL routing
-xcrun simctl boot 7C38B713-D423-443D-A02E-18F600DBAAAB
-xcrun simctl install booted /tmp/sb_simbuild/...ShhhcribbleiOS.app
-xcrun simctl openurl booted "https://tiurihartog.github.io/shhhcribble-aasa/keyboard/record-from-keyboard"
 ```
 
-The phone needs to be **unlocked** for `devicectl process launch` to succeed. If you see "Locked" errors, ask the user to unlock.
-
-## Recent commits
-
-Most recent: `ee1d3c1` — Phase E (session mode) + Phase G (hand-rolled QWERTY)
-
-Before that:
-- `8d47d52` — Sprint 5 polish (clipboard restore + warm-mode toggle + onboarding)
-- `052ea71` — Sprint 5 working (single-engine warm + Task.cancel kill-switch)
-- `5b8dc9d` — Sprint 5 status report (SPRINT5_REPORT.md)
-- `2bb5673` — Investigation logs
-- `0398e1c` — Initial keyboard scaffold
-- `4295213` — Paid signing + App Group restored
+The phone needs to be **unlocked** for `devicectl process launch` to succeed.
 
 ## Device info
 
@@ -194,8 +141,15 @@ Before that:
   - Keyboard: `com.hendrivanniekerk.shhhcribble.keyboard`
   - Shared framework: `com.hendrivanniekerk.shhhcribble.shared`
 
-Note: bundle prefix is still `com.hendrivanniekerk` (from when Hendri was the primary author). It works because the user's paid team can claim that namespace. Could be renamed to `com.tiurihartog.shhhcribble.*` in a future polish pass — not urgent.
-
 ---
 
-*Hand off complete. Path A first; Path B is the safe fallback.*
+## Next session
+
+Pick up with the Path B polish items above, in roughly this order:
+1. Add onboarding screen explaining the orange-mic trade-off.
+2. Hide the warm-mode duration picker; ship Always-only OR keep it but be explicit about the iOS 26.4 cold-start brokenness.
+3. AirPods + phone-call interruption verification on device.
+4. 1h battery benchmark in Always mode.
+5. TestFlight.
+
+Hand off complete. Path B works. Ship it.
