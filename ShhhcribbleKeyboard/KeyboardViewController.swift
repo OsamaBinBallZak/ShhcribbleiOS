@@ -5,35 +5,37 @@ import os
 
 private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "keyboard")
 
-/// Custom Shhhcribble keyboard. Push-to-talk:
+/// Shhhcribble's iOS custom keyboard. Hand-built QWERTY because the
+/// KeyboardKit binary framework wouldn't load on device (extension
+/// crashed during init — likely LicenseKit + memory limit).
 ///
-/// - Touch-down on the mic: post `kDarwinStartRecording` so the main
-///   app (alive in background) begins recording.
-/// - Release: post `kDarwinStopRecording`. Main app stops, transcribes,
-///   posts `kDarwinTranscriptReady`. We pick that up and inject via
-///   `textDocumentProxy.insertText(_:)`.
-///
-/// If the engine isn't warm (cold start), the SwiftUI view switches to
-/// a "Open Shhhcribble" banner whose button calls `extensionContext.open`
-/// — the only path Apple allows for keyboard → app foregrounding.
-///
-/// Memory budget: ~70 MB. Parakeet (~66 MB) stays in the main app; this
-/// extension only handles UI + IPC + proxy insertion.
+/// Layout:
+///   - Toolbar row: status label + Voice/Stop button
+///   - 3 letter rows: QWERTY layout with shift
+///   - Bottom row: numbers toggle, globe (next keyboard), space, return
+///   - Number/symbol modes via toggle key
 final class KeyboardViewController: UIInputViewController {
 
-    private let state = KeyboardState()
-    private var hostingController: UIHostingController<KeyboardRootView>?
+    private let toolbarState = KeyboardState()
+    private let layoutState = KeyboardLayoutState()
+    private var hostingController: UIHostingController<ShhhcribbleKeyboardView>?
     private var pollTimer: Timer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        KeyboardBridge.debug("KeyboardViewController.viewDidLoad — build with debug logs is active")
 
-        let root = KeyboardRootView(
-            state: state,
-            onPushToTalkBegin: { [weak self] in self?.handlePushToTalkBegin() },
-            onPushToTalkEnd: { [weak self] in self?.handlePushToTalkEnd() },
-            onColdStart: { [weak self] in self?.handleColdStart() },
-            onNextKeyboard: { [weak self] in self?.advanceToNextInputMode() }
+        let root = ShhhcribbleKeyboardView(
+            state: toolbarState,
+            layoutState: layoutState,
+            onKey: { [weak self] key in self?.handleKey(key) },
+            onShift: { [weak self] in self?.handleShift() },
+            onBackspace: { [weak self] in self?.handleBackspace() },
+            onSpace: { [weak self] in self?.textDocumentProxy.insertText(" ") },
+            onReturn: { [weak self] in self?.textDocumentProxy.insertText("\n") },
+            onNextKeyboard: { [weak self] in self?.advanceToNextInputMode() },
+            onVoice: { [weak self] in self?.handleVoiceTap() },
+            onStopActive: { [weak self] in self?.handleStopActiveRecording() }
         )
 
         let host = UIHostingController(rootView: root)
@@ -51,18 +53,13 @@ final class KeyboardViewController: UIInputViewController {
         ])
 
         self.hostingController = host
-        registerDarwinObservers()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // Belt-and-braces: in case the transcript landed while the keyboard
-        // was suspended and our Darwin observer wasn't running, consume now.
         consumeAndInsertTranscriptIfReady()
-        // Re-poll engine state so the warm/cold UI flips correctly when the
-        // keyboard reappears.
-        state.refresh()
-        startPollingEngineState()
+        toolbarState.refresh()
+        startPolling()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -71,75 +68,112 @@ final class KeyboardViewController: UIInputViewController {
         pollTimer = nil
     }
 
-    deinit {
-        let token = Unmanaged.passUnretained(self).toOpaque()
-        KeyboardBridge.removeDarwinObserver(UnsafeRawPointer(token))
+    override func textDidChange(_ textInput: UITextInput?) {
+        super.textDidChange(textInput)
+        consumeAndInsertTranscriptIfReady()
+    }
+
+    private func startPolling() {
         pollTimer?.invalidate()
-    }
-
-    // MARK: - Push-to-talk
-
-    private func handlePushToTalkBegin() {
-        guard KeyboardBridge.isEngineWarm else {
-            diagLog.notice("ptt begin while engine cold — refreshing UI")
-            state.refresh()
-            return
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.toolbarState.refresh()
+            self.consumeAndInsertTranscriptIfReady()
         }
-        // Post Darwin first (fastest path when both processes are alive),
-        // then write App Group signal as a polling fallback in case the
-        // Darwin observer fires before the recipient registered or got
-        // dropped. Main app's start handler is idempotent.
-        KeyboardBridge.postDarwin(KeyboardBridge.darwinStart)
-        KeyboardBridge.writePTTSignal(.start)
-        diagLog.notice("posted darwinStart + wrote PTT start signal")
     }
 
-    private func handlePushToTalkEnd() {
-        KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
-        KeyboardBridge.writePTTSignal(.stop)
-        diagLog.notice("posted darwinStop + wrote PTT stop signal")
-        state.isTranscribing = true
+    // MARK: - Key handling
+
+    private func handleKey(_ key: String) {
+        textDocumentProxy.insertText(key)
+        // Auto-disable temporary shift after one keystroke (like the
+        // system keyboard does when you tap shift once, not twice).
+        if layoutState.shift == .once {
+            layoutState.shift = .off
+        }
     }
 
-    // MARK: - Cold start
+    private func handleShift() {
+        switch layoutState.shift {
+        case .off: layoutState.shift = .once
+        case .once: layoutState.shift = .locked
+        case .locked: layoutState.shift = .off
+        }
+    }
 
-    private func handleColdStart() {
-        extensionContext?.open(KeyboardBridge.recordURL) { success in
+    private func handleBackspace() {
+        textDocumentProxy.deleteBackward()
+    }
+
+    // MARK: - Voice / dictation
+
+    private func handleVoiceTap() {
+        KeyboardBridge.debug("voice tap: warm=\(KeyboardBridge.isEngineWarm) active=\(toolbarState.isRecordingActive)")
+        if KeyboardBridge.isEngineWarm {
+            if toolbarState.isRecordingActive {
+                KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
+                KeyboardBridge.writePTTSignal(.stop)
+            } else {
+                KeyboardBridge.postDarwin(KeyboardBridge.darwinStart)
+                KeyboardBridge.writePTTSignal(.start)
+            }
+        } else {
+            openContainingApp(url: KeyboardBridge.recordURL)
+        }
+    }
+
+    private func openContainingApp(url: URL) {
+        KeyboardBridge.debug("openContainingApp: extensionContext=\(extensionContext == nil ? "nil" : "ok") url=\(url.absoluteString)")
+        extensionContext?.open(url) { [weak self] success in
+            KeyboardBridge.debug("extensionContext.open returned success=\(success)")
             if !success {
-                diagLog.error("cold-start extensionContext.open refused")
+                DispatchQueue.main.async {
+                    self?.openViaResponderChain(url: url)
+                }
             }
         }
     }
 
-    // MARK: - Darwin observers (no-op fallback)
-    //
-    // Darwin notifications don't cross the extension/app sandbox boundary
-    // on iOS 26 — confirmed by in-process self-test. We poll the App
-    // Group instead. The transcript-ready check happens in the regular
-    // poll tick (every 1 s in this VC) plus on viewDidAppear/textDidChange.
+    @MainActor
+    private func openViaResponderChain(url: URL) {
+        var responder: UIResponder? = self
+        let legacy = sel_registerName("openURL:")
+        let modern = sel_registerName("open:options:completionHandler:")
+        var hops = 0
+        while let r = responder {
+            hops += 1
+            if r.responds(to: modern) {
+                KeyboardBridge.debug("responder fallback: \(type(of: r)) accepts open:options:completionHandler: at hop \(hops)")
+                // open(_:options:completionHandler:) takes 3 args; use a
+                // typed function pointer to call it correctly.
+                typealias OpenFn = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, AnyObject?) -> Void
+                let impl = r.method(for: modern)
+                let openFn = unsafeBitCast(impl, to: OpenFn.self)
+                openFn(r, modern, url as NSURL, [:] as NSDictionary, nil)
+                KeyboardBridge.debug("responder fallback: open:options: called")
+                return
+            }
+            if r.responds(to: legacy) {
+                KeyboardBridge.debug("responder fallback: \(type(of: r)) accepts openURL: at hop \(hops)")
+                let result = r.perform(legacy, with: url)
+                KeyboardBridge.debug("responder fallback: openURL: returned \(String(describing: result))")
+                return
+            }
+            responder = r.next
+        }
+        KeyboardBridge.debug("responder fallback: no responder accepts open URL (\(hops) hops)")
+    }
 
-    private func registerDarwinObservers() {
-        // Intentionally empty.
+    private func handleStopActiveRecording() {
+        KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
+        KeyboardBridge.writePTTSignal(.stop)
+        toolbarState.isTranscribing = true
     }
 
     private func consumeAndInsertTranscriptIfReady() {
-        state.isTranscribing = false
+        toolbarState.isTranscribing = false
         guard let transcript = KeyboardBridge.consumeTranscript() else { return }
         textDocumentProxy.insertText(transcript)
         diagLog.notice("inserted transcript of \(transcript.count, privacy: .public) chars")
-    }
-
-    // MARK: - Engine state polling
-
-    private func startPollingEngineState() {
-        pollTimer?.invalidate()
-        // 1 s tick: refresh engine-warm state AND check for a transcript
-        // that landed while the keyboard was suspended/visible. App Group
-        // polling replaces the Darwin-notification path.
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.state.refresh()
-            self.consumeAndInsertTranscriptIfReady()
-        }
     }
 }

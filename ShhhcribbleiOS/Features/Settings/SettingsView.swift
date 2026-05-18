@@ -6,7 +6,8 @@ struct SettingsView: View {
     @AppStorage("filterFillerWords") private var filterFillerWords = true
     @AppStorage("useANE") private var useANE = true
     @AppStorage("asrMode") private var asrModeRaw = AsrMode.streaming.rawValue
-    @AppStorage("keepKeyboardReady") private var keepKeyboardReady = true
+    @AppStorage("warmModeAlways") private var warmModeAlways = false
+    @AppStorage("warmModeDurationSec") private var warmModeDurationSec = 60
     // TODO: remove after onboarding QA — see plan silly-karp
     @AppStorage("onboardingComplete") private var onboardingComplete: Bool = false
     @ObservedObject private var status = TranscriptionStatus.shared
@@ -140,18 +141,51 @@ struct SettingsView: View {
 
     private var keyboardSection: some View {
         Section {
-            Toggle("Keep keyboard ready", isOn: $keepKeyboardReady)
-                .onChange(of: keepKeyboardReady) { _, newValue in
-                    if newValue {
-                        AudioSessionManager.shared.enterWarmMode()
-                    } else {
-                        AudioSessionManager.shared.exitWarmMode()
-                    }
-                }
+            Picker("Keep keyboard ready for", selection: warmModeDurationBinding) {
+                Text("30 seconds").tag(30)
+                Text("1 minute").tag(60)
+                Text("5 minutes").tag(300)
+                Text("Always (mic indicator stays on)").tag(-1)
+            }
+            .onChange(of: warmModeAlways) { _, _ in applyWarmModeSetting() }
+            .onChange(of: warmModeDurationSec) { _, _ in applyWarmModeSetting() }
         } header: {
             Text("Keyboard")
         } footer: {
-            Text("When on, the Shhhcribble keyboard's push-to-talk button records and inserts text instantly — no app switch. iOS shows a small orange dot in the status bar while this is on (Apple's privacy indicator; required for instant recording). Turn off if you don't use the keyboard or prefer the dot only during active recordings.")
+            Text("After a recording, the Shhhcribble keyboard stays ready for push-to-talk for this long. While ready, iOS shows a small orange dot in the status bar (Apple's privacy indicator). The dot disappears once the timer runs out, and the next dictation starts a new session (one quick app open).")
+        }
+    }
+
+    /// Bind the picker to a single `Int` while the underlying state is
+    /// split across `warmModeAlways` (Bool) + `warmModeDurationSec` (Int).
+    /// Tag `-1` represents the "Always" case.
+    private var warmModeDurationBinding: Binding<Int> {
+        Binding(
+            get: { warmModeAlways ? -1 : warmModeDurationSec },
+            set: { newValue in
+                if newValue == -1 {
+                    warmModeAlways = true
+                } else {
+                    warmModeAlways = false
+                    warmModeDurationSec = newValue
+                }
+            }
+        )
+    }
+
+    /// Apply the new setting immediately so the user doesn't need to
+    /// re-launch the app for the change to take effect.
+    private func applyWarmModeSetting() {
+        if warmModeAlways {
+            AudioSessionManager.shared.enterWarmMode()
+            AudioSessionManager.shared.cancelIdleExpiry()
+        } else {
+            // If warm mode is currently active because of a session, just
+            // re-schedule the expiry with the new duration. If it's not
+            // active, do nothing — next keyboard tap will start a session.
+            if AudioSessionManager.shared.warmModeActive {
+                AudioSessionManager.shared.scheduleIdleExpiry()
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 import AVFoundation
+import ShhhcribbleShared
 import UIKit
 import os
 
@@ -54,6 +55,10 @@ final class AudioRecorder {
             self?.handleConfigurationChange()
         }
 
+        // Tell the keyboard a recording is live so its mic button can
+        // switch to "Stop" mode while the user is in another app.
+        KeyboardBridge.setRecordingActive(true)
+
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
@@ -74,6 +79,8 @@ final class AudioRecorder {
         onBuffer = nil
         onLevel = nil
         smoothedLevel = 0
+
+        KeyboardBridge.setRecordingActive(false)
     }
 
     // MARK: - Private engine fallback (warm mode off)

@@ -21,12 +21,12 @@ struct ShhhcribbleApp: App {
 
     init() {
         AudioSessionManager.shared.configure()
-        // Warm mode re-enabled with the SINGLE-ENGINE design: one
-        // long-lived AVAudioEngine owned by AudioSessionManager that
-        // plays silence on output AND lends its input node to
-        // AudioRecorder for tap installation. The two-engine design
-        // crashed at installTap; sharing one engine fixes that.
-        if UserDefaults.standard.object(forKey: "keepKeyboardReady") as? Bool ?? true {
+        // Warm mode at launch: only if the user picked "Always" in Settings.
+        // Default (off + 60s) means the dot only shows during active
+        // sessions. Each keyboard cold-start opens the app, enters warm
+        // mode + starts recording, then auto-exits 60s after the last
+        // recording ends.
+        if UserDefaults.standard.bool(forKey: "warmModeAlways") {
             AudioSessionManager.shared.enterWarmMode()
         }
         AudioInterruptionObserver.shared.start()
@@ -74,20 +74,21 @@ struct ShhhcribbleApp: App {
             ShhhcribbleActivityManager.shared.reapOrphanedActivities()
         }
 
-        // Keyboard-extension push-to-talk plumbing. While the main app is
-        // alive, heartbeat to the App Group so the keyboard knows it can
-        // use the warm path (Darwin notification only — no app launch).
-        KeyboardBridge.heartbeat()
-        let initialReadback = KeyboardBridge.defaults?.object(forKey: "keyboard.engineKeepAlive")
-        print("[Shhhcribble] init heartbeat written, readback=\(String(describing: initialReadback)), appGroupID=\(KeyboardBridge.appGroupID), defaults=\(KeyboardBridge.defaults == nil ? "NIL" : "OK")")
+        // Heartbeat + Darwin/polling observers stay registered for the
+        // app's lifetime. The heartbeat itself only WRITES while warm mode
+        // is active so the keyboard's "engine warm" check correctly
+        // reflects whether the audio engine is actually ready.
+        print("[Shhhcribble] App Group: \(KeyboardBridge.appGroupID), defaults=\(KeyboardBridge.defaults == nil ? "NIL" : "OK")")
         Task.detached(priority: .background) {
             var n = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
-                KeyboardBridge.heartbeat()
-                n += 1
-                if n % 2 == 0 {
-                    print("[Shhhcribble] heartbeat tick \(n)")
+                if AudioSessionManager.shared.warmModeActive {
+                    KeyboardBridge.heartbeat()
+                    n += 1
+                    if n % 2 == 0 {
+                        print("[Shhhcribble] heartbeat tick \(n) (warm)")
+                    }
                 }
             }
         }
@@ -97,6 +98,22 @@ struct ShhhcribbleApp: App {
         // idempotent in the actor — guard at top of recordAndTranscribe).
         registerKeyboardDarwinObservers()
         startKeyboardSignalPolling()
+        startKeyboardDebugLogDrain()
+    }
+
+    /// Poll the App Group debug-log key and print anything the keyboard
+    /// has written. devicectl --console only captures the main app's
+    /// stdout, so this is the only way to see keyboard logs.
+    private func startKeyboardDebugLogDrain() {
+        Task.detached(priority: .background) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                let entries = KeyboardBridge.drainDebugLog()
+                for entry in entries {
+                    print("[Shhhcribble] \(entry)")
+                }
+            }
+        }
     }
 
     /// Poll the App Group every 100 ms for keyboard PTT signals. We
@@ -208,12 +225,14 @@ struct ShhhcribbleApp: App {
         case "record":
             startURLLaunchedRecording(trigger: .manual)
         case "record-from-keyboard":
-            // Keyboard extension wrote KeyboardBridge.Signal.startRecording
-            // and then called extensionContext.open(recordURL) — we land
-            // here. Trigger source `.keyboard` flags commit() to write the
-            // transcript back to the App Group container instead of (or
-            // in addition to) the clipboard, so the keyboard can pick it
-            // up on the user's return.
+            // Keyboard's cold-start button fired this URL. Enter warm mode
+            // FIRST so the engine + audio session are alive, then start a
+            // recording. The user is now in the foreground watching the
+            // live transcript; subsequent recordings within the idle window
+            // skip the app-switch entirely.
+            if !AudioSessionManager.shared.warmModeActive {
+                AudioSessionManager.shared.enterWarmMode()
+            }
             startURLLaunchedRecording(trigger: .keyboard)
         case "stop":
             status.launchedViaURL = true

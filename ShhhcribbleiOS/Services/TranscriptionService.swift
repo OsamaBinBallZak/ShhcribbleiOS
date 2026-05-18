@@ -492,6 +492,12 @@ actor TranscriptionService {
             await ClipboardService.shared.snapshot()
         }
 
+        // A recording is starting → cancel any pending warm-mode auto-expiry.
+        // It'll be rescheduled in `commit` when this recording finishes.
+        await MainActor.run {
+            AudioSessionManager.shared.cancelIdleExpiry()
+        }
+
         // No clipboard snapshot/restore in the in-app flow — the user's
         // clipboard gets replaced by the transcript and stays there. Restore
         // is reserved for the Sprint 5 keyboard-extension autopaste path,
@@ -702,6 +708,10 @@ actor TranscriptionService {
             if currentTrigger == .keyboard {
                 KeyboardBridge.postDarwin(KeyboardBridge.darwinTranscriptReady)
             }
+            // Idle expiry still counts even if no transcript landed.
+            await MainActor.run {
+                AudioSessionManager.shared.scheduleIdleExpiry()
+            }
             return
         }
 
@@ -853,6 +863,9 @@ actor TranscriptionService {
                 : "doc.on.doc.fill"
             ToastManager.shared.show(toastMessage, systemImage: toastIcon)
         }
+        // Recording finalised — start the warm-mode idle countdown.
+        // If the user picked "Always" in Settings, this is a no-op.
+        AudioSessionManager.shared.scheduleIdleExpiry()
     }
 
     @MainActor

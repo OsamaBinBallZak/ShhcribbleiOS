@@ -47,6 +47,38 @@ public enum KeyboardBridge {
         static let engineKeepAlive = "keyboard.engineKeepAlive"
         static let pttSignal = "keyboard.pttSignal"          // "start" | "stop"
         static let pttSignalAt = "keyboard.pttSignalAt"      // Date
+        static let recordingActive = "keyboard.recordingActive"      // Bool
+        static let recordingActiveAt = "keyboard.recordingActiveAt"  // Date
+        static let debugLog = "keyboard.debugLog"            // [String] of recent log lines
+    }
+
+    // MARK: Debug log (keyboard writes, main app reads + prints)
+    //
+    // `devicectl --console` only captures the main app's stdout. Keyboard
+    // extension prints are invisible. This rolls a small ring of log
+    // lines through App Group so the main app can surface them.
+
+    public static func debug(_ line: String) {
+        let prefix = "[kb \(Self.shortTimestamp())] "
+        let entry = prefix + line
+        var log = (defaults?.array(forKey: Key.debugLog) as? [String]) ?? []
+        log.append(entry)
+        // Cap so we don't grow forever.
+        if log.count > 100 { log = Array(log.suffix(50)) }
+        defaults?.set(log, forKey: Key.debugLog)
+    }
+
+    /// Pop everything from the debug log. Main app calls this periodically.
+    public static func drainDebugLog() -> [String] {
+        let log = (defaults?.array(forKey: Key.debugLog) as? [String]) ?? []
+        defaults?.removeObject(forKey: Key.debugLog)
+        return log
+    }
+
+    private static func shortTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: Date())
     }
 
     // MARK: PTT signal (keyboard → main, App Group polling)
@@ -84,6 +116,22 @@ public enum KeyboardBridge {
     /// misconfigured — callers should fail soft (do nothing) rather than crash.
     public static var defaults: UserDefaults? {
         UserDefaults(suiteName: appGroupID)
+    }
+
+    // MARK: Recording-active flag (main app writes, keyboard reads)
+    //
+    // Set by `AudioRecorder.start()` / cleared in `stop()` so the
+    // keyboard can show a different button when an in-app recording
+    // is live. Keyboard's mic button: blue (warm idle) → red (Stop,
+    // recording active).
+
+    public static func setRecordingActive(_ active: Bool) {
+        defaults?.set(active, forKey: Key.recordingActive)
+        defaults?.set(Date(), forKey: Key.recordingActiveAt)
+    }
+
+    public static var isRecordingActive: Bool {
+        defaults?.bool(forKey: Key.recordingActive) ?? false
     }
 
     // MARK: Engine keepalive (main app writes, keyboard reads)

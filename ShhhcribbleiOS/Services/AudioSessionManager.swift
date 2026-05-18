@@ -1,4 +1,5 @@
 import AVFoundation
+import ShhhcribbleShared
 import UIKit
 import os
 
@@ -41,6 +42,19 @@ final class AudioSessionManager: @unchecked Sendable {
     private var routeChangeObserver: NSObjectProtocol?
     private var inputTapInstalled = false
 
+    /// Pending expiry task — restarted after each commit, cancelled when
+    /// a new recording starts. nil if warm mode is set to "Always" or off.
+    private var idleExpiryTask: Task<Void, Never>?
+
+    /// Read the user's chosen idle duration from UserDefaults. Returns nil
+    /// for "always" — no auto-expire. Defaults to 60 s on first launch.
+    public static var configuredIdleDurationSec: Int? {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: "warmModeAlways") { return nil }
+        let raw = defaults.object(forKey: "warmModeDurationSec") as? Int
+        return raw ?? 60
+    }
+
     // MARK: - Session lifecycle
 
     /// Configures the session category. Called once at app launch.
@@ -76,11 +90,47 @@ final class AudioSessionManager: @unchecked Sendable {
 
     func exitWarmMode() {
         guard warmModeActive else { return }
+        idleExpiryTask?.cancel()
+        idleExpiryTask = nil
         unobserveRouteChanges()
         stopEngine()
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         warmModeActive = false
         print("[Shhhcribble] exited warm mode")
+    }
+
+    /// Schedule auto-exit after `configuredIdleDurationSec` seconds of
+    /// inactivity. Call after each finalised recording.
+    /// Cancelled when a new recording starts (via `cancelIdleExpiry`).
+    func scheduleIdleExpiry() {
+        idleExpiryTask?.cancel()
+        guard warmModeActive,
+              let duration = Self.configuredIdleDurationSec else {
+            // "Always" mode or warm mode off — no expiry.
+            return
+        }
+        print("[Shhhcribble] scheduling warm-mode idle expiry in \(duration)s")
+        idleExpiryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled,
+                  let self,
+                  self.warmModeActive else { return }
+            // Don't exit if a recording happens to be active right now —
+            // the recording's commit will reschedule us. Use the bridge
+            // since TranscriptionStatus lives in the main module.
+            if KeyboardBridge.isRecordingActive {
+                print("[Shhhcribble] idle expiry fired but recording active — deferring")
+                self.scheduleIdleExpiry()
+                return
+            }
+            print("[Shhhcribble] warm-mode idle expiry firing")
+            self.exitWarmMode()
+        }
+    }
+
+    func cancelIdleExpiry() {
+        idleExpiryTask?.cancel()
+        idleExpiryTask = nil
     }
 
     /// Re-enters warm mode after an interruption (phone call, Siri).
