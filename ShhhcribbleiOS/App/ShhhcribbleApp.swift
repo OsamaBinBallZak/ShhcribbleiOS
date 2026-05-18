@@ -21,12 +21,14 @@ struct ShhhcribbleApp: App {
 
     init() {
         AudioSessionManager.shared.configure()
-        // Warm mode disabled — `.playAndRecord` with a silent player
-        // engine corrupts the input node format on iOS 26 (crashes in
-        // installTap with IsFormatSampleRateAndChannelCountValid).
-        // For now the app gets suspended after backgrounding and the
-        // keyboard's warm path doesn't survive that. To be fixed in a
-        // follow-up with a different keepalive strategy.
+        // Warm mode re-enabled with the SINGLE-ENGINE design: one
+        // long-lived AVAudioEngine owned by AudioSessionManager that
+        // plays silence on output AND lends its input node to
+        // AudioRecorder for tap installation. The two-engine design
+        // crashed at installTap; sharing one engine fixes that.
+        if UserDefaults.standard.object(forKey: "keepKeyboardReady") as? Bool ?? true {
+            AudioSessionManager.shared.enterWarmMode()
+        }
         AudioInterruptionObserver.shared.start()
         StopRecordingIntent.performer = {
             await TranscriptionService.shared.stopRecording()

@@ -4,17 +4,20 @@ import os
 
 private let audioLog = Logger(subsystem: "com.shhhcribble.diag", category: "audio")
 
+/// Captures mic buffers by installing a tap on `AudioSessionManager`'s
+/// shared warm engine. Does NOT own an engine of its own — the previous
+/// two-engine design corrupted the input node format on iOS 26 (crashed
+/// `installTap` with `IsFormatSampleRateAndChannelCountValid`).
+///
+/// Hendri's original rule of "fresh engine per recording for AirPods
+/// route-change self-healing" is now satisfied by `AudioSessionManager`
+/// rebuilding the warm engine on `AVAudioEngineConfigurationChange`.
 final class AudioRecorder {
-    private var engine = AVAudioEngine()
     private var onBuffer: ((AVAudioPCMBuffer) -> Void)?
     private var onLevel: ((Float) -> Void)?
     private(set) var isRunning = false
 
-    /// Smoothed RMS level kept between callbacks for the envelope follower.
-    /// Attack is instantaneous (max of incoming or decayed prior); release
-    /// is a per-buffer decay so the bars trail off during pauses.
     private var smoothedLevel: Float = 0
-
     private var routeChangeObserver: NSObjectProtocol?
 
     func start(
@@ -26,17 +29,23 @@ final class AudioRecorder {
         self.onLevel = onLevel
         self.smoothedLevel = 0
 
-        AudioSessionManager.shared.configure()
-        AudioSessionManager.shared.activate()
+        // The session manager owns the engine + activation. If warm mode
+        // is on, the engine is already running and we just need to attach
+        // a tap. If warm mode is off, fall back to a one-off configure +
+        // activate cycle — the old behaviour for in-app recording when
+        // the keyboard pathway isn't in play.
+        if !AudioSessionManager.shared.warmModeActive {
+            AudioSessionManager.shared.configure()
+            AudioSessionManager.shared.activate()
+            // No warm engine to tap. We need a private engine for this
+            // case. (Used for in-app foreground recording when the user
+            // hasn't enabled "Keep keyboard ready".)
+            try installPrivateEngine()
+        } else {
+            // Warm engine path — install tap on the shared engine.
+            try installSharedTap()
+        }
 
-        try installTapAndStart()
-
-        // Observe mid-recording route changes (AirPods disconnect, Continuity
-        // Mic swap, Bluetooth dropout). Per CLAUDE.md, the right response is
-        // a fresh AVAudioEngine — surgically patching the existing one
-        // deadlocks on AirPods. Already-captured samples are preserved by the
-        // caller's accumulation buffers; the new tap continues feeding into
-        // the same continuation.
         routeChangeObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: nil,
@@ -54,73 +63,110 @@ final class AudioRecorder {
             NotificationCenter.default.removeObserver(obs)
             routeChangeObserver = nil
         }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        if AudioSessionManager.shared.warmModeActive {
+            AudioSessionManager.shared.removeInputTap()
+        } else {
+            privateEngine?.inputNode.removeTap(onBus: 0)
+            privateEngine?.stop()
+            privateEngine = nil
+        }
         isRunning = false
         onBuffer = nil
         onLevel = nil
         smoothedLevel = 0
     }
 
-    // MARK: - Internals
+    // MARK: - Private engine fallback (warm mode off)
+    //
+    // When warm mode is disabled the recorder owns its engine for a
+    // single recording, recreated each time per Hendri's AirPods rule.
 
-    private func installTapAndStart() throws {
+    private var privateEngine: AVAudioEngine?
+
+    private func installPrivateEngine() throws {
+        let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
-        print("[Shhhcribble] AudioRecorder input format: sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
-
+        print("[Shhhcribble] AudioRecorder (private) input format: sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
         var bufferCount = 0
-        // Buffer size 0 lets AVAudioEngine pick its natural delivery size.
-        // Hardcoding (e.g. 2560) silently truncates trailing audio on AirPods
-        // because they deliver variable-size stereo buffers; pre-sized taps
-        // can clip the last frames of an utterance.
         inputNode.installTap(onBus: 0, bufferSize: 0, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             bufferCount += 1
             if bufferCount == 1 || bufferCount == 10 {
-                print("[Shhhcribble] AudioRecorder buffer #\(bufferCount) frameLength=\(buffer.frameLength)")
+                print("[Shhhcribble] AudioRecorder (private) buffer #\(bufferCount) frameLength=\(buffer.frameLength)")
             }
-
-            // RMS for the audio level visualizer — read directly off the
-            // tap-owned buffer; we don't need a copy for this.
-            if let ch = buffer.floatChannelData?[0] {
-                let count = Int(buffer.frameLength)
-                if count > 0 {
-                    var sum: Float = 0
-                    for i in 0..<count { sum += ch[i] * ch[i] }
-                    let rms = (sum / Float(count)).squareRoot()
-                    let scaled = min(1.0, rms * 12.0)
-                    self.smoothedLevel = max(scaled, self.smoothedLevel * 0.78)
-                    self.onLevel?(self.smoothedLevel)
-                }
-            }
-
-            // Allocate a fresh buffer per callback sized to the actual
-            // frameLength delivered. The tap reuses backing storage, so
-            // yielding the original reference would let downstream consumers
-            // observe mutated frames.
-            if let copy = Self.copyBuffer(buffer) {
-                self.onBuffer?(copy)
-            }
+            self.handleBuffer(buffer)
         }
         try engine.start()
+        self.privateEngine = engine
         isRunning = true
+    }
+
+    private func installSharedTap() throws {
+        var bufferCount = 0
+        let ok = AudioSessionManager.shared.installInputTap { [weak self] buffer, _ in
+            guard let self else { return }
+            bufferCount += 1
+            if bufferCount == 1 || bufferCount == 10 {
+                print("[Shhhcribble] AudioRecorder (shared) buffer #\(bufferCount) frameLength=\(buffer.frameLength)")
+            }
+            self.handleBuffer(buffer)
+        }
+        guard ok else {
+            throw NSError(
+                domain: "Shhhcribble.AudioRecorder",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not install tap on warm engine"]
+            )
+        }
+        isRunning = true
+    }
+
+    // MARK: - Buffer handling
+
+    private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
+        // RMS for the audio level visualizer.
+        if let ch = buffer.floatChannelData?[0] {
+            let count = Int(buffer.frameLength)
+            if count > 0 {
+                var sum: Float = 0
+                for i in 0..<count { sum += ch[i] * ch[i] }
+                let rms = (sum / Float(count)).squareRoot()
+                let scaled = min(1.0, rms * 12.0)
+                self.smoothedLevel = max(scaled, self.smoothedLevel * 0.78)
+                self.onLevel?(self.smoothedLevel)
+            }
+        }
+        if let copy = Self.copyBuffer(buffer) {
+            self.onBuffer?(copy)
+        }
     }
 
     private func handleConfigurationChange() {
         guard isRunning else { return }
-        audioLog.notice("AVAudioEngineConfigurationChange — rebuilding engine")
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        // Fresh engine — patching the existing one is unreliable when the
-        // input device changed (AirPods reconnect, route swap).
-        engine = AVAudioEngine()
-        do {
-            try installTapAndStart()
-            audioLog.notice("Engine rebuilt OK after route change")
-        } catch {
-            audioLog.error("Engine rebuild failed: \(String(describing: error), privacy: .public)")
-            isRunning = false
+        audioLog.notice("AVAudioEngineConfigurationChange — reinstalling tap")
+        if AudioSessionManager.shared.warmModeActive {
+            // Session manager rebuilds the engine on the same notification.
+            // Wait briefly so the new engine is up, then reinstall the tap.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                guard let self, self.isRunning else { return }
+                do {
+                    try self.installSharedTap()
+                } catch {
+                    audioLog.error("reinstall shared tap failed: \(String(describing: error), privacy: .public)")
+                }
+            }
+        } else {
+            privateEngine?.inputNode.removeTap(onBus: 0)
+            privateEngine?.stop()
+            privateEngine = nil
+            do {
+                try installPrivateEngine()
+                audioLog.notice("private engine rebuilt OK after route change")
+            } catch {
+                audioLog.error("private engine rebuild failed: \(String(describing: error), privacy: .public)")
+                isRunning = false
+            }
         }
     }
 

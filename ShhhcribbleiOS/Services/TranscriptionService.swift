@@ -148,6 +148,18 @@ actor TranscriptionService {
     private var cancelled = false
     private var reloading = false
 
+    /// The currently-running recording task, if any. Set in
+    /// `recordAndTranscribe` to wrap the body; allows `stopRecording` /
+    /// `cancelRecording` to do a synchronous `Task.cancel()` as a hard
+    /// kill-switch when the actor state has drifted into an inconsistent
+    /// state and the normal continuation-based stop path is stuck. Per
+    /// research agent #3 (see SPRINT5_REPORT.md): flag-based cooperative
+    /// cancel only fires at await boundaries we remember to check; a
+    /// Task cancel + `Task.checkCancellation()` at every phase boundary
+    /// is the idiomatic Swift pattern. We run both in parallel — the
+    /// continuation handles the happy path, Task.cancel() is recovery.
+    private var recordingTask: Task<Void, Error>?
+
     private var feedTask: Task<Void, Never>?
     private var tdtLiveTask: Task<Void, Never>?
     private var tdtLiveRunning = false
@@ -285,8 +297,16 @@ actor TranscriptionService {
                 // the next stable point inside recordAndTranscribe.
                 pendingStopBeforeStart = true
                 await TranscriptionStatus.shared.event("Stop deferred until recording starts")
+                // Hard kill-switch: if recording is in mid-init right now,
+                // Task.cancel() will throw at the next checkCancellation()
+                // even if the actor's mailbox can't reach us.
+                recordingTask?.cancel()
             } else {
                 await TranscriptionStatus.shared.event("Stop: already stopping or not recording")
+                // Defensive: if state is desynced (in-app Cancel button
+                // reports "already stopping or not recording" but the
+                // user can still see the overlay), nuke the task too.
+                recordingTask?.cancel()
             }
             return
         }
@@ -338,8 +358,10 @@ actor TranscriptionService {
             if !recording {
                 pendingCancelBeforeStart = true
                 await TranscriptionStatus.shared.event("Cancel deferred until recording starts")
+                recordingTask?.cancel()
             } else {
                 await TranscriptionStatus.shared.event("Cancel: already stopping or not recording")
+                recordingTask?.cancel()
             }
             return
         }
@@ -363,12 +385,37 @@ actor TranscriptionService {
 
     private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
 
+    /// Public entry point. Wraps the body in an internal `Task` so callers
+    /// of `stopRecording` / `cancelRecording` can hard-cancel via
+    /// `Task.cancel()` in addition to the existing continuation-based
+    /// stop. The body throws `CancellationError` at any `Task.checkCancellation()`
+    /// call site if cancel fires; we swallow it here so callers don't
+    /// need to handle it.
     func recordAndTranscribe(
         trigger: TriggerSource = .manual,
         appendingTo: UUID? = nil
     ) async throws {
-        guard !recording else { return }
+        guard !recording, recordingTask == nil else { return }
+        let task = Task<Void, Error> { [weak self] in
+            try await self?.performRecording(trigger: trigger, appendingTo: appendingTo)
+        }
+        self.recordingTask = task
+        defer { self.recordingTask = nil }
+        do {
+            try await task.value
+        } catch is CancellationError {
+            await TranscriptionStatus.shared.event("Recording task cancelled via Task.cancel()")
+        }
+    }
 
+    /// The actual recording body. Don't call directly — go through
+    /// `recordAndTranscribe` so the task reference is captured and
+    /// cancel can interrupt this body at any await point that runs
+    /// `try Task.checkCancellation()`.
+    private func performRecording(
+        trigger: TriggerSource,
+        appendingTo: UUID?
+    ) async throws {
         // Claim the recording slot ATOMICALLY before any suspension point.
         // Without this, a Darwin-notification stop arriving during the
         // permission check sees `recording == false`, sets pendingStop,
@@ -378,9 +425,12 @@ actor TranscriptionService {
         cancelled = false
         lastPartial = ""
 
+        try Task.checkCancellation()
+
         // Pre-flight mic permission. Surface a typed error UX in the
         // recording overlay if denied.
         let perm = await MainActor.run { AVAudioApplication.shared.recordPermission }
+        try Task.checkCancellation()
         switch perm {
         case .granted:
             break
@@ -459,14 +509,9 @@ actor TranscriptionService {
         }
         self.bgTaskId = taskId
         await TranscriptionStatus.shared.event("Triggered")
-        // Pause the warm-mode silent engine for the duration of the real
-        // recording. Both engines compete for the .playAndRecord session
-        // and the silent player starves the mic input tap — confirmed
-        // empirically (recording yields empty transcript while warm
-        // engine is running).
-        await MainActor.run {
-            AudioSessionManager.shared.pauseWarmEngine()
-        }
+        // No more pause/resume of the warm engine — the single-engine
+        // design has AudioRecorder install a tap on the same engine
+        // that's playing silence, so they coexist by design.
         await setUIRecording(true)
         let activityOK = await MainActor.run { ShhhcribbleActivityManager.shared.start() }
         if !activityOK {
@@ -479,11 +524,6 @@ actor TranscriptionService {
             appendTargetId = nil
             let endId = self.bgTaskId
             self.bgTaskId = .invalid
-            // Resume the warm engine so the keyboard stays warm for the
-            // next push-to-talk.
-            Task { @MainActor in
-                AudioSessionManager.shared.resumeWarmEngine()
-            }
             Task { @MainActor in
                 // Only collapse to .idle if we're still mid-recording; if a
                 // branch already moved us to .noSpeech or .error, leave that
@@ -502,6 +542,8 @@ actor TranscriptionService {
         }
 
         async let modelReady: Void = ensureModelLoaded()
+
+        try Task.checkCancellation()
 
         let recorder = AudioRecorder()
         self.recorder = recorder
@@ -528,6 +570,12 @@ actor TranscriptionService {
 
         do {
             try await modelReady
+        } catch is CancellationError {
+            recorder.stop()
+            streamContinuation?.finish()
+            streamContinuation = nil
+            self.recorder = nil
+            throw CancellationError()
         } catch {
             recorder.stop()
             streamContinuation?.finish()
@@ -536,6 +584,8 @@ actor TranscriptionService {
             await notifyError(.modelLoadFailed(humaniseModelLoadError(error)))
             return
         }
+
+        try Task.checkCancellation()
 
         await TranscriptionStatus.shared.event("Recording (\(loadedMode?.rawValue ?? "?"))…")
 

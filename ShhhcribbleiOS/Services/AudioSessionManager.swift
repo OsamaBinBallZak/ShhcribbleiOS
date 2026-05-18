@@ -4,55 +4,60 @@ import os
 
 private let log = Logger(subsystem: "com.shhhcribble.diag", category: "audio-session")
 
-/// Maintains the global `AVAudioSession` plus a "warm" engine running a
-/// silent player node. The warm engine has two jobs:
+/// Owns the global `AVAudioSession` and a single long-lived `AVAudioEngine`.
 ///
-/// 1. Keep `setActive(true)` from being silently revoked. iOS interrupts
-///    apps that hold `.playAndRecord` active but don't actually produce
-///    any audio — Apple's "stopping playback for too long" interrupt.
-/// 2. Combined with `UIBackgroundModes: audio`, keep the app process
-///    non-suspended in the background. This is the prerequisite for the
-///    keyboard extension's push-to-talk to deliver Darwin notifications
-///    (suspended apps don't receive them — confirmed by Apple DTS,
-///    forum 769398).
+/// The engine has two coexisting responsibilities:
 ///
-/// The recording-capture engine (`AudioRecorder`) is still recreated per
-/// recording because Hendri's CLAUDE.md note about AirPods route-change
-/// self-healing still applies. We run two engines simultaneously: this
-/// keepalive engine for output, AudioRecorder's engine for input. They
-/// share the same `AVAudioSession`.
-/// Not `@MainActor` so the existing `TranscriptionService` actor and
-/// `AudioInterruptionObserver` call sites continue to work synchronously.
-/// `AVAudioSession.sharedInstance()` methods are thread-safe; the warm
-/// engine is touched only via `MainActor.run` blocks internally.
+/// 1. **Output path** (always on, in warm mode): an `AVAudioPlayerNode`
+///    plays silence into the main mixer continuously. This is what
+///    keeps `setActive(true)` from being silently revoked and what makes
+///    iOS consider us "actively doing audio work" — the prerequisite for
+///    `UIBackgroundModes: audio` to keep the process non-suspended.
+///
+/// 2. **Input path** (only when recording): an external caller installs
+///    a tap on the engine's input node via `installInputTap(...)` and
+///    receives mic buffers. `removeInputTap()` pulls it back. The engine
+///    keeps running between recordings — no engine teardown, no engine
+///    rebuild per recording (unlike Hendri's previous design).
+///
+/// Trade-off accepted: a permanent orange microphone indicator in the
+/// status bar. This is Apple's no-suppress-allowed privacy disclosure
+/// for any app holding `.playAndRecord` + `setActive(true)`. SuperWhisper
+/// makes the same trade-off.
+///
+/// Hendri's original AirPods rule was "rebuild engine on
+/// `AVAudioEngineConfigurationChange`". We still observe that here
+/// (rebuilding the warm engine instead of AudioRecorder's now), so
+/// route changes self-heal.
 final class AudioSessionManager: @unchecked Sendable {
     static let shared = AudioSessionManager()
     private init() {}
 
     private let session = AVAudioSession.sharedInstance()
-    private var warmEngine: AVAudioEngine?
+    private(set) var warmEngine: AVAudioEngine?
     private var silentPlayer: AVAudioPlayerNode?
+    private var silentBuffer: AVAudioPCMBuffer?
     private(set) var warmModeActive = false
+    private var routeChangeObserver: NSObjectProtocol?
+    private var inputTapInstalled = false
 
-    /// Configures the session category and prepares for warm mode. Call
-    /// once at app launch.
+    // MARK: - Session lifecycle
+
+    /// Configures the session category. Called once at app launch.
     func configure() {
         do {
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
-            // .playAndRecord lets the silent player produce output AND
-            // future recordings capture input on the same session. The
-            // .mixWithOthers option lets the user keep music playing
-            // while we hold the session.
-            // Restored to Hendri's original config — `.playAndRecord` with
-            // a silent-player warm engine broke the input node format
-            // (IsFormatSampleRateAndChannelCountValid crash in installTap).
-            // For now, revert to the recording-only category and accept
-            // that the app gets suspended after backgrounding. We'll add
-            // a different keepalive strategy in a follow-up.
-            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-            print("[Shhhcribble] session category set: .record/.measurement (no warm engine)")
+            // .playAndRecord + .measurement: speech-optimised input
+            // (disables AGC for raw mic levels) plus the ability to
+            // play silence on output to keep iOS happy.
+            try session.setCategory(
+                .playAndRecord,
+                mode: .measurement,
+                options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+            )
+            print("[Shhhcribble] session category set: .playAndRecord/.measurement")
         } catch {
-            log.error("session configure failed: \(error.localizedDescription, privacy: .public)")
+            print("[Shhhcribble] session configure failed: \(error.localizedDescription)")
         }
     }
 
@@ -63,66 +68,73 @@ final class AudioSessionManager: @unchecked Sendable {
     func enterWarmMode() {
         guard !warmModeActive else { return }
         activateRetrying()
-        startWarmEngine()
+        startEngine()
+        observeRouteChanges()
         warmModeActive = true
-        log.notice("entered warm mode")
+        print("[Shhhcribble] entered warm mode (single engine, silent player)")
     }
 
-    /// Stops the silent-player engine and deactivates the session. Used
-    /// when the user disables the "keep keyboard ready" setting.
     func exitWarmMode() {
         guard warmModeActive else { return }
-        stopWarmEngine()
+        unobserveRouteChanges()
+        stopEngine()
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         warmModeActive = false
-        log.notice("exited warm mode")
+        print("[Shhhcribble] exited warm mode")
     }
 
     /// Re-enters warm mode after an interruption (phone call, Siri).
-    /// Called from `AudioInterruptionObserver`.
     func reactivateAfterInterruption() {
         guard warmModeActive else { return }
-        stopWarmEngine()
+        stopEngine()
         activateRetrying()
-        startWarmEngine()
+        startEngine()
     }
 
-    /// Pause the warm engine for the duration of a real recording. Two
-    /// engines sharing the same `.playAndRecord` session corrupts the
-    /// input node's format (empirically — crashes with
-    /// `IsFormatSampleRateAndChannelCountValid` in `installTap`).
-    /// Full teardown + session deactivate; the recording's own configure
-    /// + activate will set the session back up cleanly.
-    func pauseWarmEngine() {
-        guard warmModeActive else { return }
-        print("[Shhhcribble] pausing warm engine for active recording")
-        stopWarmEngine()
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+    // MARK: - Recording API (called by AudioRecorder)
+
+    /// Install a tap on the warm engine's input node. The engine must
+    /// be running in warm mode for this to work. Returns true on success.
+    func installInputTap(
+        bufferSize: AVAudioFrameCount = 0,
+        onBuffer: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) -> Bool {
+        guard let engine = warmEngine, engine.isRunning else {
+            print("[Shhhcribble] installInputTap FAILED: warm engine not running")
+            return false
+        }
+        if inputTapInstalled {
+            print("[Shhhcribble] installInputTap: tap already installed, removing first")
+            engine.inputNode.removeTap(onBus: 0)
+            inputTapInstalled = false
+        }
+        let format = engine.inputNode.outputFormat(forBus: 0)
+        print("[Shhhcribble] installInputTap: format sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            print("[Shhhcribble] installInputTap FAILED: input format invalid")
+            return false
+        }
+        engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: format, block: onBuffer)
+        inputTapInstalled = true
+        return true
     }
 
-    /// Restart the warm engine after a recording finishes.
-    func resumeWarmEngine() {
-        guard warmModeActive, warmEngine == nil else { return }
-        print("[Shhhcribble] resuming warm engine after recording")
-        activateRetrying()
-        startWarmEngine()
+    func removeInputTap() {
+        guard let engine = warmEngine, inputTapInstalled else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        inputTapInstalled = false
     }
 
-    // MARK: - Legacy API used by AudioRecorder
-    //
-    // Existing callers (TranscriptionService, recordAndTranscribe path)
-    // call activate() / deactivate() around their recordings. Keep those
-    // working — they now no-op when warm mode is already active.
+    // MARK: - Legacy API kept for compatibility
 
     func activate() {
+        // No-op in warm mode — session is already active.
         if warmModeActive { return }
         activateRetrying()
     }
 
     func deactivate() {
-        // Don't deactivate if warm mode is on — that would tear down the
-        // keyboard's wake path. Caller intends to deactivate after a
-        // recording finishes; if we're permanently warm we ignore it.
+        // No-op in warm mode — leaving session active is the whole point.
         if warmModeActive { return }
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -145,45 +157,40 @@ final class AudioSessionManager: @unchecked Sendable {
         }
     }
 
-    private func startWarmEngine() {
+    private func startEngine() {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
         let format = engine.outputNode.inputFormat(forBus: 0)
 
-        // 200 ms of silence. iOS just needs to see continuous output flow;
-        // the buffer length doesn't matter as long as we keep scheduling
-        // it. We loop-schedule it forever.
         let frameCount = AVAudioFrameCount(format.sampleRate * 0.2)
-        guard let silentBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            log.error("could not allocate silent buffer for warm engine")
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            print("[Shhhcribble] startEngine FAILED: could not allocate silent buffer")
             return
         }
-        silentBuffer.frameLength = frameCount
-        // PCM buffers are zero-initialised on alloc — that's literal silence.
+        buffer.frameLength = frameCount
 
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        // Volume to zero just in case the format ever carries non-zero
-        // data (e.g. after an interruption-resume the buffer survived).
         engine.mainMixerNode.outputVolume = 0.0
+
+        // Touch the inputNode to ensure the engine binds it (some iOS
+        // versions defer binding until the node is referenced).
+        _ = engine.inputNode
 
         do {
             try engine.start()
             player.play()
-            scheduleSilentLoop(player: player, buffer: silentBuffer)
+            scheduleSilentLoop(player: player, buffer: buffer)
             self.warmEngine = engine
             self.silentPlayer = player
-            log.notice("warm engine started (silent loop scheduled)")
+            self.silentBuffer = buffer
+            print("[Shhhcribble] warm engine started")
         } catch {
-            log.error("warm engine start failed: \(error.localizedDescription, privacy: .public)")
+            print("[Shhhcribble] warm engine start FAILED: \(error.localizedDescription)")
         }
     }
 
     private func scheduleSilentLoop(player: AVAudioPlayerNode, buffer: AVAudioPCMBuffer) {
-        // Re-schedule manually in the completion handler so each buffer
-        // is independently tracked. Completion runs on an internal audio
-        // thread; re-hop to main for the next schedule to keep engine
-        // accesses single-threaded.
         player.scheduleBuffer(buffer, at: nil, options: []) { [weak self, weak player] in
             guard let player else { return }
             DispatchQueue.main.async {
@@ -193,10 +200,46 @@ final class AudioSessionManager: @unchecked Sendable {
         }
     }
 
-    private func stopWarmEngine() {
+    private func stopEngine() {
+        if inputTapInstalled {
+            warmEngine?.inputNode.removeTap(onBus: 0)
+            inputTapInstalled = false
+        }
         silentPlayer?.stop()
         warmEngine?.stop()
         silentPlayer = nil
+        silentBuffer = nil
         warmEngine = nil
+    }
+
+    // MARK: - Route change handling (AirPods etc.)
+
+    private func observeRouteChanges() {
+        guard routeChangeObserver == nil else { return }
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleRouteChange()
+        }
+    }
+
+    private func unobserveRouteChanges() {
+        if let obs = routeChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            routeChangeObserver = nil
+        }
+    }
+
+    private func handleRouteChange() {
+        print("[Shhhcribble] AVAudioEngineConfigurationChange — rebuilding warm engine")
+        // Preserve whether a tap was installed so AudioRecorder can be
+        // notified to reinstall after rebuild. For now we just tear the
+        // tap; AudioRecorder's reinstall is handled by its own observer
+        // (the same notification fires).
+        stopEngine()
+        activateRetrying()
+        startEngine()
     }
 }
