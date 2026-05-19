@@ -30,11 +30,16 @@ struct ShhhcribbleApp: App {
             AudioSessionManager.shared.enterWarmMode()
         }
         AudioInterruptionObserver.shared.start()
-        // Phase J Tier 2 — Push to Talk. Joins the PT channel so iOS
-        // keeps our audio session resumable from background, allowing
-        // the keyboard's signal to wake the app and start recording
-        // even when warm mode is off. See PushToTalkService.swift.
-        Task { @MainActor in PushToTalkService.shared.start() }
+        // Phase J Tier 2 — Push to Talk entitlement + background mode
+        // are kept (they extend our background runtime), but we do NOT
+        // link PushToTalk.framework. Superwhisper's IPA confirms they
+        // don't either — the entitlement alone is what matters. The
+        // previous PushToTalkService.swift was deleted (S1 of the
+        // 3-Opus audit on 2026-05-19).
+        //
+        // Side effect: any previously-joined PT channel persists in iOS
+        // until the user deletes + reinstalls the app. If you see the
+        // system "Talk" bar showing, delete the app and reinstall.
         StopRecordingIntent.performer = {
             await TranscriptionService.shared.stopRecording()
         }
@@ -180,11 +185,16 @@ struct ShhhcribbleApp: App {
                 print("[Shhhcribble] PTT signal: \(signal.signal.rawValue) at \(signal.at)")
                 switch signal.signal {
                 case .start:
+                    // Direct path: call TranscriptionService.recordAndTranscribe.
+                    // (Earlier this routed through PushToTalkService.beginTransmission
+                    // — that service was removed in the S1 cleanup since Superwhisper
+                    // doesn't link PT framework either; the entitlement alone gives
+                    // background runtime.)
                     Task.detached(priority: .userInitiated) {
                         do {
                             try await TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)
                         } catch {
-                            print("[Shhhcribble] PTT start -> recordAndTranscribe failed: \(error)")
+                            print("[Shhhcribble] PTT start → recordAndTranscribe failed: \(error)")
                         }
                     }
                 case .stop:
@@ -234,20 +244,6 @@ struct ShhhcribbleApp: App {
                 .overlay { RecordingOverlayView(status: status) }
                 .animation(.spring(response: 0.42, dampingFraction: 0.78), value: status.overlayVisible)
                 .onOpenURL { url in handle(url: url) }
-                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-                    // Universal Link entry point (Phase H take 2). Keyboard
-                    // fires https://osamabinballzak.github.io/keyboard/record-from-keyboard;
-                    // AASA at the host root claims /keyboard/* for this app,
-                    // so iOS routes the open here instead of Safari.
-                    guard let url = activity.webpageURL else { return }
-                    print("[Shhhcribble] onContinueUserActivity webpageURL=\(url.absoluteString)")
-                    if url.path.hasSuffix("/record-from-keyboard") {
-                        if !AudioSessionManager.shared.warmModeActive {
-                            AudioSessionManager.shared.enterWarmMode()
-                        }
-                        startURLLaunchedRecording(trigger: .keyboard)
-                    }
-                }
                 .fullScreenCover(isPresented: Binding(
                     get: { !onboardingComplete },
                     set: { _ in /* dismissal happens via the onboarding "Get Started" / Skip buttons flipping the flag */ }
@@ -284,12 +280,14 @@ struct ShhhcribbleApp: App {
         switch action {
         case "record":
             startURLLaunchedRecording(trigger: .manual)
-        case "record-from-keyboard":
+        case "record-from-keyboard", "keyboard":
             // Keyboard's cold-start button fired this URL. Enter warm mode
             // FIRST so the engine + audio session are alive, then start a
             // recording. The user is now in the foreground watching the
             // live transcript; subsequent recordings within the idle window
             // skip the app-switch entirely.
+            // `keyboard` is the Superwhisper-style short form (no path),
+            // `record-from-keyboard` is the legacy long form. Both work.
             if !AudioSessionManager.shared.warmModeActive {
                 AudioSessionManager.shared.enterWarmMode()
             }

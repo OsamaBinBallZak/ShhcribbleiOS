@@ -20,15 +20,13 @@ import ShhhcribbleShared
 /// resident, and iOS will resume a suspended app briefly to run an
 /// AppIntent invoked via Shortcuts. PTT only adds the
 /// instant-wake-from-fully-suspended capability.
-// AudioRecordingIntent removed — adopting it without the
-// com.apple.developer.push-to-talk entitlement appears to cause iOS to
-// SIGTRAP at launch when registering the AppShortcutsProvider. We can
-// add it back once Tier 2 (the PTT entitlement) lands; the protocol is
-// purely a marker that affects the recording-indicator UI, not the
-// AppIntent's ability to be invoked from a Shortcut. The keyboard path
-// still works without it because the app's existing audio session
-// handles the actual recording.
-struct ToggleRecordingIntent: AppIntent {
+// `AudioRecordingIntent` re-enabled 2026-05-19 after the PTT entitlement
+// landed. Without PTT in place, iOS SIGTRAP'd at AppShortcutsProvider
+// registration time. With PTT + aps-environment, the conformance is
+// accepted and gives the intent background mic-access semantics —
+// matching Superwhisper's `ToggleRecordingIntent` which conforms to the
+// same iOS 18+ system protocol (SUPERWHISPER_RE.md → AppIntents manifest).
+struct ToggleRecordingIntent: AppIntent, AudioRecordingIntent {
     static var title: LocalizedStringResource = "Toggle Recording"
     static var description = IntentDescription(
         "Start a Shhhcribble recording. Run again to stop and return the transcript."

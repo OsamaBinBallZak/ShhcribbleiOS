@@ -90,16 +90,30 @@ final class KeyboardViewController: KeyboardInputViewController {
 
     private func handleVoiceTap() {
         KeyboardBridge.debug("voice tap: warm=\(KeyboardBridge.isEngineWarm) active=\(toolbarState.isRecordingActive)")
-        if KeyboardBridge.isEngineWarm {
-            if toolbarState.isRecordingActive {
-                KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
-                KeyboardBridge.writePTTSignal(.stop)
-            } else {
-                KeyboardBridge.postDarwin(KeyboardBridge.darwinStart)
-                KeyboardBridge.writePTTSignal(.start)
-            }
+        // Phase J Tier 2 — always write the PTT signal regardless of
+        // warm state. With the PushToTalk entitlement, iOS keeps the
+        // main app's process alive in background long enough for the
+        // polling task to pick up our App Group signal and call
+        // PushToTalkService.beginTransmission. The `extensionContext.open`
+        // cold-start path stays as a fallback but is empirically
+        // denied on iOS 26 regardless of URL scheme.
+        if toolbarState.isRecordingActive {
+            KeyboardBridge.postDarwin(KeyboardBridge.darwinStop)
+            KeyboardBridge.writePTTSignal(.stop)
         } else {
-            openContainingApp(url: KeyboardBridge.recordURL)
+            KeyboardBridge.postDarwin(KeyboardBridge.darwinStart)
+            KeyboardBridge.writePTTSignal(.start)
+        }
+        // If the engine isn't currently warm, also fire the URL as a
+        // best-effort cold-start. Harmless if iOS denies it (we've
+        // already written the signal). If iOS one day allows it, app
+        // foregrounds in parallel with the PTT path.
+        if !KeyboardBridge.isEngineWarm {
+            // Use appOpenURL (custom scheme `shhhcribble://keyboard`)
+            // — mirrors Superwhisper's verified pattern. recordURL
+            // (Shortcuts URL) is kept around for the in-app intent
+            // path but isn't useful for cold-start from the keyboard.
+            openContainingApp(url: KeyboardBridge.appOpenURL)
         }
     }
 

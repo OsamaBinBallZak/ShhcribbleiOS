@@ -73,6 +73,7 @@ targets:
         LSRequiresIPhoneOS: true
         NSMicrophoneUsageDescription: "Shhhcribble records audio to transcribe your speech. Recording only happens when you trigger it."
         NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
         UIBackgroundModes:
           - audio
           - fetch
@@ -96,10 +97,14 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.shhhcribble.app
-        com.apple.developer.associated-domains:
-          - applinks:osamabinballzak.github.io
+        # associated-domains removed 2026-05-19 — Phase H (Universal
+        # Links) was empirically ruled out. The Stage 1 URL-tap from
+        # Notes did work but isn't useful for the keyboard path which
+        # is the actual blocker. Superwhisper doesn't have this either.
         com.apple.developer.push-to-talk: true
-        aps-environment: development
+        # aps-environment removed 2026-05-19 — was only needed for
+        # PTChannelManager init, which we no longer use. Superwhisper
+        # doesn't have this entitlement either.
       # App Group restored 2026-05-14 alongside paid Developer Program
       # enrolment (team 9W82X49JZS) ahead of Sprint 5 keyboard extension.
       # Associated Domains (Phase H, take 2 — 2026-05-19): AASA now hosted
@@ -188,6 +193,15 @@ targets:
         CFBundleDisplayName: Shhhcribble
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "1"
+        # Phase J Tier 2 cleanup — these match Superwhisper's keyboard
+        # Info.plist exactly. URLScheme + HostBundleIdentifier are
+        # custom keys their code reads at runtime to look up which
+        # scheme to open. NSMicrophoneUsageDescription is harmless on
+        # a keyboard (it can't actually record) but Superwhisper
+        # declares it; some iOS code paths might check it.
+        URLScheme: shhhcribble
+        HostBundleIdentifier: com.hendrivanniekerk.shhhcribble
+        NSMicrophoneUsageDescription: "Record audio for transcribing"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController

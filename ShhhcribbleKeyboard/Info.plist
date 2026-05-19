@@ -20,6 +20,8 @@
 	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>HostBundleIdentifier</key>
+	<string>com.hendrivanniekerk.shhhcribble</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
@@ -38,5 +40,9 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record audio for transcribing</string>
+	<key>URLScheme</key>
+	<string>shhhcribble</string>
 </dict>
 </plist>

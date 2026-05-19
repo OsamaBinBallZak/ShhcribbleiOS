@@ -41,6 +41,8 @@
 	<string>Shhhcribble records audio to transcribe your speech. Recording only happens when you trigger it.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

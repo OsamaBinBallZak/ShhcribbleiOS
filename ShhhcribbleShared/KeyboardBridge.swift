@@ -48,10 +48,12 @@ public enum KeyboardBridge {
     public static let recordURL = URL(string: "shortcuts://run-shortcut?name=Toggle%20Shhhcribble%20Recording")!
 
     /// Fallback URL for the legacy "open the main app" cold-start path.
-    /// Currently broken from keyboard extensions on iOS 26.4 — kept for
-    /// when we figure out why Superwhisper's equivalent works and ours
-    /// doesn't (signing? trusted-bundle? See SUPERWHISPER_RE.md).
-    public static let appOpenURL = URL(string: "shhhcribble://record-from-keyboard")!
+    /// Captured idevicesyslog of Superwhisper shows they fire
+    /// `superwhisper://keyboard` (simple host, no path) and SpringBoard
+    /// honours it under its "predates iOS 10.0" keyboard-service
+    /// allowlist. Mirroring that shape to test whether our hyphenated
+    /// path was tripping iOS's URL parsing.
+    public static let appOpenURL = URL(string: "shhhcribble://keyboard")!
 
     /// How fresh `engineKeepAlive` must be for the warm-path Darwin
     /// notification to be considered viable. Two heartbeat intervals.

@@ -16,11 +16,13 @@ struct ShhhcribbleShortcuts: AppShortcutsProvider {
         // including via the keyboard's `shortcuts://run-shortcut?name=...`
         // bridge. Phrase template mirrors Superwhisper's
         // "Toggle Superwhisper Recording".
+        // Mirror Superwhisper's pattern exactly: single phrase template
+        // "Toggle ${applicationName} Recording" — extra phrases dilute
+        // Siri's match confidence. SUPERWHISPER_RE.md.
         AppShortcut(
             intent: ToggleRecordingIntent(),
             phrases: [
                 "Toggle \(.applicationName) Recording",
-                "Dictate with \(.applicationName)",
             ],
             shortTitle: "Toggle Recording",
             systemImageName: "record.circle"
