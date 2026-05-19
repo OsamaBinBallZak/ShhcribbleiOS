@@ -652,7 +652,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.widget;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -675,7 +675,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.keyboard;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.keyboard;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -699,7 +699,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -725,7 +725,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.shared;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.shared;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -749,7 +749,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.keyboard;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.keyboard;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -776,7 +776,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.shared;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.shared;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -800,7 +800,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble.widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble.widget;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.9;
@@ -943,7 +943,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hendrivanniekerk.shhhcribble;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hendritiuri.shhhcribble;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = 1;

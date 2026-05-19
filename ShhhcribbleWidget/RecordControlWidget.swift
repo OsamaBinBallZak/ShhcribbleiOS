@@ -4,7 +4,7 @@ import SwiftUI
 import WidgetKit
 
 struct RecordControlWidget: ControlWidget {
-    static let kind = "com.hendrivanniekerk.shhhcribble.record"
+    static let kind = "com.hendritiuri.shhhcribble.record"
 
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind) {

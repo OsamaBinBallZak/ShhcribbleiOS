@@ -4,7 +4,7 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.hendrivanniekerk.shhhcribble</string>
+		<string>com.hendritiuri.shhhcribble</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -26,7 +26,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.hendrivanniekerk.shhhcribble</string>
+			<string>com.hendritiuri.shhhcribble</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>shhhcribble</string>
@@ -43,6 +43,10 @@
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
 	<true/>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>ToggleRecordingIntentIntent</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

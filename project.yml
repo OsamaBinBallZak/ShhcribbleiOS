@@ -1,6 +1,6 @@
 name: ShhhcribbleiOS
 options:
-  bundleIdPrefix: com.hendrivanniekerk
+  bundleIdPrefix: com.hendritiuri
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
@@ -40,7 +40,7 @@ targets:
       - path: ShhhcribbleShared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble.shared
+        PRODUCT_BUNDLE_IDENTIFIER: com.hendritiuri.shhhcribble.shared
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         CODE_SIGN_STYLE: Automatic
@@ -67,13 +67,19 @@ targets:
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "1"
         CFBundleURLTypes:
-          - CFBundleURLName: com.hendrivanniekerk.shhhcribble
+          - CFBundleURLName: com.hendritiuri.shhhcribble
             CFBundleURLSchemes:
               - shhhcribble
         LSRequiresIPhoneOS: true
         NSMicrophoneUsageDescription: "Shhhcribble records audio to transcribe your speech. Recording only happens when you trigger it."
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
+        # Audit M1 — Superwhisper declares this for continuation user
+        # activities (Spotlight, Handoff, NSUserActivity restoration).
+        # ToggleRecordingIntentIntent is the Apple-generated activity
+        # type name from the AppIntent's @AppIntent macro.
+        NSUserActivityTypes:
+          - ToggleRecordingIntentIntent
         UIBackgroundModes:
           - audio
           - fetch
@@ -85,7 +91,7 @@ targets:
         # session alive across backgrounding, and the system to resume
         # the app via the PT framework when a channel becomes active.
         BGTaskSchedulerPermittedIdentifiers:
-          - com.hendrivanniekerk.shhhcribble
+          - com.hendritiuri.shhhcribble
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
           - arm64
@@ -112,7 +118,7 @@ targets:
       # subpath bug. Match path /keyboard/* in the AASA components.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble
+        PRODUCT_BUNDLE_IDENTIFIER: com.hendritiuri.shhhcribble
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
@@ -163,7 +169,7 @@ targets:
           - group.com.shhhcribble.app
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble.widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.hendritiuri.shhhcribble.widget
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
@@ -200,7 +206,7 @@ targets:
         # a keyboard (it can't actually record) but Superwhisper
         # declares it; some iOS code paths might check it.
         URLScheme: shhhcribble
-        HostBundleIdentifier: com.hendrivanniekerk.shhhcribble
+        HostBundleIdentifier: com.hendritiuri.shhhcribble
         NSMicrophoneUsageDescription: "Record audio for transcribing"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
@@ -219,7 +225,7 @@ targets:
           - group.com.shhhcribble.app
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble.keyboard
+        PRODUCT_BUNDLE_IDENTIFIER: com.hendritiuri.shhhcribble.keyboard
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
