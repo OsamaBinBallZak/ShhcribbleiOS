@@ -30,6 +30,11 @@ struct ShhhcribbleApp: App {
             AudioSessionManager.shared.enterWarmMode()
         }
         AudioInterruptionObserver.shared.start()
+        // Phase J Tier 2 — Push to Talk. Joins the PT channel so iOS
+        // keeps our audio session resumable from background, allowing
+        // the keyboard's signal to wake the app and start recording
+        // even when warm mode is off. See PushToTalkService.swift.
+        Task { @MainActor in PushToTalkService.shared.start() }
         StopRecordingIntent.performer = {
             await TranscriptionService.shared.stopRecording()
         }
@@ -63,6 +68,47 @@ struct ShhhcribbleApp: App {
                         status.setPhase(.error(.other(msg)))
                     }
                 }
+            }
+        }
+        // Phase J Tier 1 — the no-app-switch path. ToggleRecordingIntent
+        // is invoked by the user-installed Shhhcribble Shortcut, which the
+        // keyboard's mic button fires via `shortcuts://run-shortcut?name=...`.
+        // openAppWhenRun=false on the intent means iOS runs perform() in
+        // this process without foregrounding the app, so the host app
+        // (Notes, Messages, etc.) stays on screen.
+        ToggleRecordingIntent.performer = { @MainActor releaseMic in
+            let service = TranscriptionService.shared
+            if await service.isRecording {
+                // STOP path. Record timestamp before stop so we can detect
+                // the new transcript landing in App Group.
+                let preStop = KeyboardBridge.transcriptReadyAt
+                await service.stopRecording()
+                // Poll App Group for the transcript (max 30 s). Recording
+                // finalisation includes the ASR pass which can take a few
+                // seconds; 30 s is a generous ceiling.
+                let deadline = Date().addingTimeInterval(30)
+                while Date() < deadline {
+                    if let readyAt = KeyboardBridge.transcriptReadyAt,
+                       readyAt != preStop {
+                        let transcript = KeyboardBridge.consumeTranscript() ?? ""
+                        if releaseMic {
+                            AudioSessionManager.shared.exitWarmMode()
+                        }
+                        return transcript
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                return ""
+            } else {
+                // START path. Fire-and-forget the recording so perform()
+                // returns immediately (the user will tap mic again to stop).
+                Task.detached(priority: .userInitiated) {
+                    try? await service.recordAndTranscribe(trigger: .keyboard)
+                }
+                // Brief pause so a fast double-tap doesn't race the
+                // recording-flag claim inside performRecording.
+                try? await Task.sleep(for: .milliseconds(200))
+                return ""
             }
         }
         Task.detached(priority: .userInitiated) {

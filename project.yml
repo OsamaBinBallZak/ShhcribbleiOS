@@ -75,9 +75,19 @@ targets:
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
+          - fetch
+          - processing
+          - push-to-talk
+        # push-to-talk background mode enabled 2026-05-19 alongside the
+        # com.apple.developer.push-to-talk entitlement granted at App ID
+        # level. Lets the PTChannelManager keep its channel + audio
+        # session alive across backgrounding, and the system to resume
+        # the app via the PT framework when a channel becomes active.
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.hendrivanniekerk.shhhcribble
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
-          - armv7
+          - arm64
           - microphone
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -88,6 +98,8 @@ targets:
           - group.com.shhhcribble.app
         com.apple.developer.associated-domains:
           - applinks:osamabinballzak.github.io
+        com.apple.developer.push-to-talk: true
+        aps-environment: development
       # App Group restored 2026-05-14 alongside paid Developer Program
       # enrolment (team 9W82X49JZS) ahead of Sprint 5 keyboard extension.
       # Associated Domains (Phase H, take 2 — 2026-05-19): AASA now hosted
@@ -130,6 +142,7 @@ targets:
       - path: ShhhcribbleiOS/App/Intents/StartRecordingIntent.swift
       - path: ShhhcribbleiOS/App/Intents/StopRecordingIntent.swift
       - path: ShhhcribbleiOS/App/Intents/CancelRecordingIntent.swift
+      - path: ShhhcribbleiOS/App/Intents/ToggleRecordingIntent.swift
     info:
       path: ShhhcribbleWidget/Info.plist
       properties:

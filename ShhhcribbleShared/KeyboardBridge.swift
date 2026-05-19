@@ -27,18 +27,31 @@ import Foundation
 public enum KeyboardBridge {
     public static let appGroupID = "group.com.shhhcribble.app"
     public static let urlScheme = "shhhcribble"
-    /// URL the keyboard fires to wake the main app.
+    /// URL the keyboard fires to drive dictation.
     ///
-    /// Phase H take 3 (2026-05-19): empirically `extensionContext.open` of
-    /// an HTTPS Universal Link from a keyboard extension returns success=false
-    /// even with valid AASA + AASA-confirmed Universal Link routing for
-    /// user-tap-initiated opens (Stage 1 verified). Falling back to the
-    /// canonical pattern: the keyboard opens the containing app via the
-    /// containing app's own registered custom scheme. The previous failure
-    /// of this exact path yesterday was almost certainly because Full Access
-    /// was OFF for the keyboard in Settings — `extensionContext.open` may
-    /// require Full Access to actually route the open, not just App Group.
-    public static let recordURL = URL(string: "shhhcribble://record-from-keyboard")!
+    /// Phase J Tier 1 (2026-05-19): Shortcuts URL. iOS allows keyboard
+    /// extensions to open `shortcuts://` because Shortcuts is a system
+    /// app. The Shortcut runs our `ToggleRecordingIntent` (which conforms
+    /// to `AudioRecordingIntent`) in this app's process WITHOUT
+    /// foregrounding it — host app (Notes, Messages, etc.) stays on
+    /// screen. The intent toggles recording: first invocation starts,
+    /// second invocation stops + returns the transcript, which the
+    /// user-installed Shortcut copies to the clipboard, which the keyboard
+    /// reads and inserts via UITextDocumentProxy.
+    ///
+    /// Reverse-engineered from Superwhisper — see SUPERWHISPER_RE.md.
+    ///
+    /// User must install the Shhhcribble Shortcut in Shortcuts.app for
+    /// this URL to do anything. Onboarding handles the deep link to
+    /// install it. Without the shortcut, `extensionContext.open` opens
+    /// Shortcuts.app to a "Shortcut not found" screen.
+    public static let recordURL = URL(string: "shortcuts://run-shortcut?name=Toggle%20Shhhcribble%20Recording")!
+
+    /// Fallback URL for the legacy "open the main app" cold-start path.
+    /// Currently broken from keyboard extensions on iOS 26.4 — kept for
+    /// when we figure out why Superwhisper's equivalent works and ours
+    /// doesn't (signing? trusted-bundle? See SUPERWHISPER_RE.md).
+    public static let appOpenURL = URL(string: "shhhcribble://record-from-keyboard")!
 
     /// How fresh `engineKeepAlive` must be for the warm-path Darwin
     /// notification to be considered viable. Two heartbeat intervals.
