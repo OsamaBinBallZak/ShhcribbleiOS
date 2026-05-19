@@ -188,6 +188,20 @@ struct ShhhcribbleApp: App {
                 .overlay { RecordingOverlayView(status: status) }
                 .animation(.spring(response: 0.42, dampingFraction: 0.78), value: status.overlayVisible)
                 .onOpenURL { url in handle(url: url) }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    // Universal Link entry point (Phase H take 2). Keyboard
+                    // fires https://osamabinballzak.github.io/keyboard/record-from-keyboard;
+                    // AASA at the host root claims /keyboard/* for this app,
+                    // so iOS routes the open here instead of Safari.
+                    guard let url = activity.webpageURL else { return }
+                    print("[Shhhcribble] onContinueUserActivity webpageURL=\(url.absoluteString)")
+                    if url.path.hasSuffix("/record-from-keyboard") {
+                        if !AudioSessionManager.shared.warmModeActive {
+                            AudioSessionManager.shared.enterWarmMode()
+                        }
+                        startURLLaunchedRecording(trigger: .keyboard)
+                    }
+                }
                 .fullScreenCover(isPresented: Binding(
                     get: { !onboardingComplete },
                     set: { _ in /* dismissal happens via the onboarding "Get Started" / Skip buttons flipping the flag */ }

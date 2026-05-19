@@ -86,6 +86,14 @@ final class AudioSessionManager: @unchecked Sendable {
         observeRouteChanges()
         warmModeActive = true
         print("[Shhhcribble] entered warm mode (single engine, silent player)")
+        // Arm the idle-expiry timer so URL-scheme-launched warm sessions
+        // (Universal Link / custom scheme cold-start path) actually expire
+        // after the configured duration. Without this, entering warm mode
+        // outside of a recording flow (e.g. via Safari opening the custom
+        // scheme, or the keyboard's cold-start URL open) left the engine
+        // warm forever — orange mic indicator never cleared.
+        // `scheduleIdleExpiry()` is a no-op when "Always" is configured.
+        scheduleIdleExpiry()
     }
 
     func exitWarmMode() {

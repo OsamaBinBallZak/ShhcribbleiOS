@@ -86,8 +86,13 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.com.shhhcribble.app
+        com.apple.developer.associated-domains:
+          - applinks:osamabinballzak.github.io
       # App Group restored 2026-05-14 alongside paid Developer Program
       # enrolment (team 9W82X49JZS) ahead of Sprint 5 keyboard extension.
+      # Associated Domains (Phase H, take 2 — 2026-05-19): AASA now hosted
+      # at the host root via GitHub user-pages repo, fixing yesterday's
+      # subpath bug. Match path /keyboard/* in the AASA components.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hendrivanniekerk.shhhcribble

@@ -27,6 +27,17 @@ import Foundation
 public enum KeyboardBridge {
     public static let appGroupID = "group.com.shhhcribble.app"
     public static let urlScheme = "shhhcribble"
+    /// URL the keyboard fires to wake the main app.
+    ///
+    /// Phase H take 3 (2026-05-19): empirically `extensionContext.open` of
+    /// an HTTPS Universal Link from a keyboard extension returns success=false
+    /// even with valid AASA + AASA-confirmed Universal Link routing for
+    /// user-tap-initiated opens (Stage 1 verified). Falling back to the
+    /// canonical pattern: the keyboard opens the containing app via the
+    /// containing app's own registered custom scheme. The previous failure
+    /// of this exact path yesterday was almost certainly because Full Access
+    /// was OFF for the keyboard in Settings — `extensionContext.open` may
+    /// require Full Access to actually route the open, not just App Group.
     public static let recordURL = URL(string: "shhhcribble://record-from-keyboard")!
 
     /// How fresh `engineKeepAlive` must be for the warm-path Darwin
