@@ -676,8 +676,16 @@ actor TranscriptionService {
         // the clipboard stays fresh while the app is foreground. iOS
         // blocks pasteboard writes from backgrounded apps, so we can't
         // wait until after the user taps the back pill.
+        //
+        // Note: no "Recording…" placeholder text. TypingViewModel uses
+        // Option B (no rewind in live preview) which means any initial
+        // partial that doesn't have prefix of the placeholder gets
+        // silently ignored, leaving the placeholder stuck. The waveform
+        // animation + the overlay's title give plenty of "recording is
+        // active" feedback; empty live text is fine until the first
+        // TDT result arrives.
         await MainActor.run {
-            TranscriptionStatus.shared.partialSnippet = "Recording…"
+            TranscriptionStatus.shared.partialSnippet = ""
         }
         let feed = Task.detached {
             for await buffer in buffers {
@@ -826,11 +834,15 @@ actor TranscriptionService {
         guard let copy = Self.copy(buffer: buffer) else { return }
         tdtBuffers.append(copy)
 
-        // Feed the same buffer to VAD in parallel. Step B: just log
-        // speechStart/speechEnd events to verify the boundary detection
-        // fires sensibly. Step C will use these events to rotate
-        // tdtBuffers mid-recording.
-        Task { await self.feedVAD(buffer: copy) }
+        // VAD: accumulate samples inline (cheap synchronous resample +
+        // append, no actor hop), only spawn a Task when we have enough
+        // samples for an actual VAD inference chunk. Cuts the per-buffer
+        // actor reentries by ~2.5x and lets TDT live transcribes get
+        // enough actor time to run smoothly. See Tier 6 Step D for the
+        // flicker root cause this addresses.
+        if vadManager != nil {
+            accumulateVADSamples(from: copy)
+        }
 
         // Event-driven trigger: whenever fresh audio lands and enough time
         // has elapsed since the last transcribe, kick one off. This catches
@@ -842,12 +854,12 @@ actor TranscriptionService {
         }
     }
 
-    /// Resample incoming buffer to 16 kHz Float, accumulate, and feed
-    /// to VadManager in 4096-sample chunks. Logs speechStart/speechEnd
-    /// events via TranscriptionStatus.event. Failures are non-fatal
-    /// (VAD is a polish feature, not on the critical recording path).
-    private func feedVAD(buffer: AVAudioPCMBuffer) async {
-        guard let vad = vadManager, var state = vadStreamState else { return }
+    /// Synchronous half of VAD plumbing: resample the incoming buffer
+    /// (synchronous), append to the pending-samples accumulator, then
+    /// drain as many full 4096-sample chunks as we have, spawning one
+    /// Task per chunk for the actual VAD inference. Called inline from
+    /// `appendTdtBuffer` (already on the actor) so no extra actor hop.
+    private func accumulateVADSamples(from buffer: AVAudioPCMBuffer) {
         let samples: [Float]
         do {
             samples = try vadResampler.resampleBuffer(buffer)
@@ -859,22 +871,30 @@ actor TranscriptionService {
         while vadPendingSamples.count >= Self.vadChunkSize {
             let chunk = Array(vadPendingSamples.prefix(Self.vadChunkSize))
             vadPendingSamples.removeFirst(Self.vadChunkSize)
-            do {
-                let result = try await vad.processStreamingChunk(chunk, state: state)
-                state = result.state
-                if let event = result.event {
-                    let kind = event.kind == .speechStart ? "speechStart" : "speechEnd"
-                    await TranscriptionStatus.shared.event("VAD \(kind) @ sample \(event.sampleIndex) p=\(String(format: "%.2f", result.probability))")
-                    if event.kind == .speechEnd {
-                        await maybeRotateChunk(triggerSource: "vad-speechEnd")
-                    }
-                }
-            } catch {
-                await TranscriptionStatus.shared.event("VAD process err: \(error.localizedDescription)")
-                break
-            }
+            Task { await self.processVADChunk(chunk) }
         }
-        vadStreamState = state
+    }
+
+    /// Async half of VAD plumbing: run the actual `processStreamingChunk`
+    /// inference, update the streaming state, log events, and trigger
+    /// rotation on speechEnd. One Task per chunk (~4 Hz at 16 kHz),
+    /// not per incoming buffer (~10 Hz).
+    private func processVADChunk(_ chunk: [Float]) async {
+        guard let vad = vadManager, var state = vadStreamState else { return }
+        do {
+            let result = try await vad.processStreamingChunk(chunk, state: state)
+            state = result.state
+            vadStreamState = state
+            if let event = result.event {
+                let kind = event.kind == .speechStart ? "speechStart" : "speechEnd"
+                await TranscriptionStatus.shared.event("VAD \(kind) @ sample \(event.sampleIndex) p=\(String(format: "%.2f", result.probability))")
+                if event.kind == .speechEnd {
+                    await maybeRotateChunk(triggerSource: "vad-speechEnd")
+                }
+            }
+        } catch {
+            await TranscriptionStatus.shared.event("VAD process err: \(error.localizedDescription)")
+        }
     }
 
     /// Step C — chunk rotation. Triggered by VAD speechEnd events (when

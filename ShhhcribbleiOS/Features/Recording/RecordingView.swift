@@ -467,35 +467,45 @@ final class TypingViewModel: ObservableObject {
     @Published var displayedText: String = ""
     private var targetText: String = ""
     private var typingTask: Task<Void, Never>?
+    /// Counts consecutive `updateTarget` calls that we rejected (i.e.
+    /// the new text was a content revision too large to honour). After
+    /// `rejectionLimit` rejections we force-accept the next update to
+    /// avoid the display freezing indefinitely when TDT is making lots
+    /// of small word changes none of which extend `displayedText`.
+    private var rejectedInARow: Int = 0
+    /// Maximum rewind distance (characters) we allow without forcing
+    /// the rejection path. Tuned to catch single-word corrections like
+    /// "their" → "there" (small) while blocking catastrophic flips
+    /// like "Hello world this is a test" → "Goodbye" (large rewind).
+    private static let maxAllowedRewind = 15
+    /// After this many consecutive rejections, force-accept the next
+    /// update. At ~700 ms per TDT live iteration, 4 rejections ≈ 2.8 s
+    /// of staleness — about the longest we'd want to leave the user
+    /// staring at a frozen display.
+    private static let rejectionLimit = 4
 
     func updateTarget(_ newText: String) {
-        // Three cases, in order of preference:
+        // Four cases in order:
         //
-        // 1. Strict prefix match — the new partial just appended to the end.
-        //    Standard append-typing animation.
+        // 1. Strict prefix match → standard forward append (no flicker).
         //
-        // 2. Normalised prefix match — the new text is a strict prefix of the
-        //    displayed once we strip punctuation + casing. This is what TDT
-        //    does on most iterations: it re-transcribes the full audio buffer
-        //    every ~700 ms, and the model freely revises punctuation /
-        //    capitalisation as more context arrives. The content didn't
-        //    change, only the format. Adopt the new text *in place* up to
-        //    the current displayed length and let the typer continue forward
-        //    into the new tail. The reader sees a soft "Hello" → "Hello,"
-        //    rather than a flicker-and-rewind.
+        // 2. Normalised prefix match (same content, different format) →
+        //    snap in place to update casing/punctuation without rewind.
         //
-        //    Pre-streaming-removal (Phase J Tier 5), this normalised path
-        //    wasn't needed because the StreamingEouAsrManager produced
-        //    stable left-to-right partials within a chunk. TDT's re-
-        //    transcribe-the-whole-thing approach revises freely, which
-        //    triggered the legacy rewind logic on most iterations and
-        //    showed up as visible flicker — see Item 1 in plan
-        //    yes-the-plan-is-steady-spindle.md.
+        // 3. Small content revision (rewind ≤ maxAllowedRewind chars) →
+        //    honour the rewind. Catches "their" → "there" type fixes
+        //    fluidly; user perceives a small in-place correction.
         //
-        // 3. Genuine content revision — engine actually changed words. Keep
-        //    the legacy rewind-to-common-prefix behaviour.
+        // 4. Large content revision → REJECT, keep current displayed.
+        //    These are the catastrophic flips that flicker badly. After
+        //    `rejectionLimit` consecutive rejections, force-accept the
+        //    next one to avoid permanent freeze.
+        //
+        // See backlog.md "Live-preview text stability strategy revisit"
+        // for future improvements (word-level confidence freeze, etc).
         if newText.hasPrefix(displayedText) {
             targetText = newText
+            rejectedInARow = 0
         } else if Self.normalise(newText).hasPrefix(Self.normalise(displayedText)) {
             // Pure formatting revision. Snap displayed to the new text's
             // first `displayedText.count` characters; from here the typer
@@ -503,16 +513,27 @@ final class TypingViewModel: ObservableObject {
             let snapLen = min(displayedText.count, newText.count)
             displayedText = String(newText.prefix(snapLen))
             targetText = newText
+            rejectedInARow = 0
         } else {
-            // Content revised. Walk back to common prefix and resume.
+            // Genuine content revision. Compute the rewind distance.
             var commonLen = 0
             let dChars = Array(displayedText)
             let nChars = Array(newText)
             for i in 0..<min(dChars.count, nChars.count) {
                 if dChars[i] == nChars[i] { commonLen = i + 1 } else { break }
             }
-            displayedText = String(displayedText.prefix(commonLen))
-            targetText = newText
+            let rewindDistance = displayedText.count - commonLen
+            let underThreshold = rewindDistance <= Self.maxAllowedRewind
+            let forceAccept = rejectedInARow >= Self.rejectionLimit
+            if underThreshold || forceAccept {
+                displayedText = String(displayedText.prefix(commonLen))
+                targetText = newText
+                rejectedInARow = 0
+            } else {
+                // Reject — keep current displayed, don't restart typer.
+                rejectedInARow += 1
+                return
+            }
         }
 
         typingTask?.cancel()
@@ -543,6 +564,7 @@ final class TypingViewModel: ObservableObject {
         typingTask = nil
         displayedText = ""
         targetText = ""
+        rejectedInARow = 0
     }
 
     /// Strip punctuation and lowercase. Used by `updateTarget` to detect
