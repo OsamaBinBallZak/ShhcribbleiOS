@@ -124,6 +124,13 @@ actor TranscriptionService {
     static let shared = TranscriptionService()
 
     private var tdtManager: AsrManager?
+    /// Voice Activity Detection — Silero-style neural classifier from
+    /// FluidAudio, completely separate from ASR. Used to find natural
+    /// chunk boundaries during long recordings so we can rotate the
+    /// accumulated `tdtBuffers` before they OOM the process (~37 min
+    /// caused an iOS jetsam pre-fix). Configured + invoked in Step B+C
+    /// of plan yes-the-plan-is-steady-spindle.md; Step A just loads it.
+    private var vadManager: VadManager?
 
     private var recorder: AudioRecorder?
     private var loadTask: Task<Void, Error>?
@@ -231,6 +238,19 @@ actor TranscriptionService {
         let m = AsrManager(config: .default)
         try await m.loadModels(models)
         self.tdtManager = m
+
+        // VAD load. Small model (~1-3 MB) used for silence-based chunk
+        // boundary detection during long recordings. Failure to load is
+        // non-fatal — chunked-transcribe falls back to a hard time cap
+        // if vadManager stays nil.
+        do {
+            let vad = try await VadManager(progressHandler: nil)
+            self.vadManager = vad
+            await TranscriptionStatus.shared.event("VAD ready")
+        } catch {
+            await TranscriptionStatus.shared.event("VAD load failed (non-fatal): \(error.localizedDescription)")
+            self.vadManager = nil
+        }
     }
 
     private func unloadCurrent() async {
@@ -238,6 +258,8 @@ actor TranscriptionService {
             await m.cleanup()
             tdtManager = nil
         }
+        // VadManager has no explicit cleanup; just drop the reference.
+        vadManager = nil
     }
 
     func reloadModel() async {
