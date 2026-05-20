@@ -128,9 +128,24 @@ actor TranscriptionService {
     /// FluidAudio, completely separate from ASR. Used to find natural
     /// chunk boundaries during long recordings so we can rotate the
     /// accumulated `tdtBuffers` before they OOM the process (~37 min
-    /// caused an iOS jetsam pre-fix). Configured + invoked in Step B+C
-    /// of plan yes-the-plan-is-steady-spindle.md; Step A just loads it.
+    /// caused an iOS jetsam pre-fix). Step A loads. Step B (current)
+    /// runs the streaming chunk processor in parallel with TDT
+    /// accumulation and logs speech-start/end events. Step C will
+    /// use those events to rotate the buffer.
     private var vadManager: VadManager?
+    /// Running state for VadManager.processStreamingChunk — accumulates
+    /// model hidden state across chunks. Initialised per recording in
+    /// performRecording, cleared on stop/cancel.
+    private var vadStreamState: VadStreamState?
+    /// Pending 16 kHz mono Float samples not yet processed by VAD.
+    /// VadManager wants exact 4096-sample chunks (~256 ms at 16 kHz);
+    /// our incoming buffers come in ~100 ms 24 kHz units, so we
+    /// resample + buffer until we have enough for one chunk.
+    private var vadPendingSamples: [Float] = []
+    /// FluidAudio's public resampler. Default-initialised it targets
+    /// 16 kHz mono Float32 — exactly what VAD wants.
+    private let vadResampler = AudioConverter()
+    private static let vadChunkSize = 4096
 
     private var recorder: AudioRecorder?
     private var loadTask: Task<Void, Error>?
@@ -358,6 +373,8 @@ actor TranscriptionService {
         feedTask?.cancel()
 
         tdtBuffers.removeAll(keepingCapacity: false)
+        vadStreamState = nil
+        vadPendingSamples.removeAll(keepingCapacity: false)
 
         // Resume the awaiter in recordAndTranscribe with empty text — the
         // `cancelled` flag is checked there to skip commit + SwiftData write.
@@ -449,6 +466,7 @@ actor TranscriptionService {
         tdtBuffers.removeAll(keepingCapacity: true)
         tdtLastLiveAt = nil
         recordingStartedAt = Date()
+        await resetVadStream()
         currentTrigger = trigger
         appendTargetId = appendingTo
         if let id = appendingTo {
@@ -726,6 +744,12 @@ actor TranscriptionService {
         guard let copy = Self.copy(buffer: buffer) else { return }
         tdtBuffers.append(copy)
 
+        // Feed the same buffer to VAD in parallel. Step B: just log
+        // speechStart/speechEnd events to verify the boundary detection
+        // fires sensibly. Step C will use these events to rotate
+        // tdtBuffers mid-recording.
+        Task { await self.feedVAD(buffer: copy) }
+
         // Event-driven trigger: whenever fresh audio lands and enough time
         // has elapsed since the last transcribe, kick one off. This catches
         // the tail of an utterance faster than the timer alone.
@@ -734,6 +758,51 @@ actor TranscriptionService {
             tdtLastLiveAt = now
             Task { await self.tdtLiveTranscribe() }
         }
+    }
+
+    /// Resample incoming buffer to 16 kHz Float, accumulate, and feed
+    /// to VadManager in 4096-sample chunks. Logs speechStart/speechEnd
+    /// events via TranscriptionStatus.event. Failures are non-fatal
+    /// (VAD is a polish feature, not on the critical recording path).
+    private func feedVAD(buffer: AVAudioPCMBuffer) async {
+        guard let vad = vadManager, var state = vadStreamState else { return }
+        let samples: [Float]
+        do {
+            samples = try vadResampler.resampleBuffer(buffer)
+        } catch {
+            // Resample failed — skip this buffer for VAD, recording continues.
+            return
+        }
+        vadPendingSamples.append(contentsOf: samples)
+        while vadPendingSamples.count >= Self.vadChunkSize {
+            let chunk = Array(vadPendingSamples.prefix(Self.vadChunkSize))
+            vadPendingSamples.removeFirst(Self.vadChunkSize)
+            do {
+                let result = try await vad.processStreamingChunk(chunk, state: state)
+                state = result.state
+                if let event = result.event {
+                    let kind = event.kind == .speechStart ? "speechStart" : "speechEnd"
+                    await TranscriptionStatus.shared.event("VAD \(kind) @ sample \(event.sampleIndex) p=\(String(format: "%.2f", result.probability))")
+                }
+            } catch {
+                await TranscriptionStatus.shared.event("VAD process err: \(error.localizedDescription)")
+                break
+            }
+        }
+        vadStreamState = state
+    }
+
+    /// Reset VAD streaming state at the start of a new recording. Called
+    /// from performRecording so each recording starts from a clean VAD
+    /// state machine (no leftover triggered=true from a prior session).
+    private func resetVadStream() async {
+        guard let vad = vadManager else {
+            vadStreamState = nil
+            vadPendingSamples.removeAll(keepingCapacity: false)
+            return
+        }
+        vadStreamState = await vad.makeStreamState()
+        vadPendingSamples.removeAll(keepingCapacity: false)
     }
 
     private func abortRecording() async {
