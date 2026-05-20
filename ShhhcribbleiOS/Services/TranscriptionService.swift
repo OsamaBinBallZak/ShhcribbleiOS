@@ -147,6 +147,33 @@ actor TranscriptionService {
     private let vadResampler = AudioConverter()
     private static let vadChunkSize = 4096
 
+    // MARK: - Chunked transcription (Step C)
+
+    /// Transcripts of audio segments already committed earlier in this
+    /// recording. On rotation we transcribe + clear `tdtBuffers` then
+    /// append the result here. The displayed partial is
+    /// `committedChunks.joined(" ") + " " + currentLivePartial`. On
+    /// stop the final transcribe runs over the remaining `tdtBuffers`
+    /// and is appended to this array before commit.
+    private var committedChunks: [String] = []
+    /// Timestamp of the last successful chunk rotation, or recording
+    /// start if no rotation yet. Used to gate rotation triggers so
+    /// every short utterance ending doesn't fragment the transcript.
+    private var lastRotationAt: Date?
+    /// Reentrancy guard. Rotation transcribe + buffer clear must run
+    /// atomically — if a second VAD speechEnd fires while we're
+    /// mid-rotation, ignore it.
+    private var rotating = false
+    /// Minimum elapsed time since last rotation before a VAD
+    /// speechEnd is allowed to trigger a new rotation. Without this,
+    /// every short pause would create a tiny chunk. 30 s gives the
+    /// model meaningful context.
+    private static let minTimeBetweenRotations: TimeInterval = 30
+    /// Forced rotation deadline. If the user has talked continuously
+    /// for this long without a clean VAD-detected pause, force a
+    /// rotation anyway to keep memory bounded.
+    private static let maxTimeWithoutRotation: TimeInterval = 90
+
     private var recorder: AudioRecorder?
     private var loadTask: Task<Void, Error>?
     private var recording = false
@@ -330,22 +357,38 @@ actor TranscriptionService {
         }
         await TranscriptionStatus.shared.event("Drained buffers")
 
-        var text = ""
+        var finalSegment = ""
         if let m = tdtManager, !tdtBuffers.isEmpty {
             await TranscriptionStatus.shared.event("TDT transcribing \(tdtBuffers.count) buffers…")
             if let merged = Self.concatenate(buffers: tdtBuffers) {
                 var decoderState = TdtDecoderState.make()
                 do {
                     let result = try await m.transcribe(merged, decoderState: &decoderState)
-                    text = result.text
+                    finalSegment = result.text
                 } catch {
                     await TranscriptionStatus.shared.event("TDT error: \(error)")
                 }
             }
         }
-        await TranscriptionStatus.shared.event("Finish returned: \"\(text.prefix(200))\"")
+        // Step C: stitch the committed chunks (already filtered) with the
+        // newly-transcribed final segment (still raw). Filtering of the
+        // final segment happens downstream in performRecording's filter
+        // pass, so we leave it raw here and let that pass apply uniformly.
+        // The committed chunks were already filter+substitution-passed at
+        // rotation time, so re-running the filter on them would be a
+        // double-filter — instead, we concatenate as-is.
+        let stitched: String
+        if committedChunks.isEmpty {
+            stitched = finalSegment
+        } else {
+            let trimmedFinal = finalSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+            stitched = trimmedFinal.isEmpty
+                ? committedChunks.joined(separator: " ")
+                : committedChunks.joined(separator: " ") + " " + trimmedFinal
+        }
+        await TranscriptionStatus.shared.event("Finish returned: \"\(stitched.prefix(200))\" (\(committedChunks.count) chunks + final)")
 
-        resumeFinish(text)
+        resumeFinish(stitched)
     }
 
     /// Real abort — drop audio, skip transcription, skip SwiftData write,
@@ -375,6 +418,10 @@ actor TranscriptionService {
         tdtBuffers.removeAll(keepingCapacity: false)
         vadStreamState = nil
         vadPendingSamples.removeAll(keepingCapacity: false)
+        // Step C: drop any in-progress rotation state too.
+        committedChunks.removeAll(keepingCapacity: false)
+        lastRotationAt = nil
+        rotating = false
 
         // Resume the awaiter in recordAndTranscribe with empty text — the
         // `cancelled` flag is checked there to skip commit + SwiftData write.
@@ -467,6 +514,10 @@ actor TranscriptionService {
         tdtLastLiveAt = nil
         recordingStartedAt = Date()
         await resetVadStream()
+        // Step C: rotation state — fresh per recording.
+        committedChunks.removeAll(keepingCapacity: false)
+        lastRotationAt = nil
+        rotating = false
         currentTrigger = trigger
         appendTargetId = appendingTo
         if let id = appendingTo {
@@ -707,7 +758,28 @@ actor TranscriptionService {
     /// clipboard. Guarded so overlapping calls don't queue up.
     private func tdtLiveTranscribe() async {
         guard !stopRequested, !tdtLiveRunning, let m = tdtManager else { return }
-        guard !tdtBuffers.isEmpty else { return }
+        // Step C: hard-cap rotation check. If we've been recording too
+        // long without a VAD-triggered rotation, force one now. Skip
+        // if we have no buffers to transcribe (rare edge case).
+        let startedAt = lastRotationAt ?? recordingStartedAt
+        if let s = startedAt, !tdtBuffers.isEmpty,
+           Date().timeIntervalSince(s) > Self.maxTimeWithoutRotation {
+            await maybeRotateChunk(triggerSource: "hard-cap")
+        }
+        guard !tdtBuffers.isEmpty else {
+            // After a rotation the live buffer is empty. Still update
+            // the displayed partial to show the committed prefix.
+            if !committedChunks.isEmpty {
+                let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
+                let joinedRaw = committedChunks.joined(separator: " ")
+                let afterFiller = filterOn ? FillerWordFilter.filter(joinedRaw) : joinedRaw
+                let displayed = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
+                await MainActor.run {
+                    TranscriptionStatus.shared.partialSnippet = displayed
+                }
+            }
+            return
+        }
         tdtLiveRunning = true
         defer { tdtLiveRunning = false }
 
@@ -719,18 +791,28 @@ actor TranscriptionService {
             let text = result.text
             guard !text.isEmpty else { return }
             let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-            let afterFiller = filterOn ? FillerWordFilter.filter(text) : text
-            let filtered = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
+            // Step C: filter the FULL combined raw text (committed + live)
+            // so filter passes work uniformly across the chunk boundary
+            // — e.g. a filler word straddling the boundary still gets
+            // caught. Committed is stored raw so this is safe.
+            let combinedRaw: String
+            if committedChunks.isEmpty {
+                combinedRaw = text
+            } else {
+                combinedRaw = committedChunks.joined(separator: " ") + " " + text
+            }
+            let afterFiller = filterOn ? FillerWordFilter.filter(combinedRaw) : combinedRaw
+            let displayed = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
             // In-app overlay gets the full transcript so the typewriter
             // can extend it smoothly. The Live Activity gets only a bounded
             // tail because widget update payloads are rate-limited and the
             // banner only renders one truncated line anyway.
-            let liveActivitySnippet = String(text.suffix(200))
+            let liveActivitySnippet = String(displayed.suffix(200))
             await MainActor.run {
-                if !filtered.isEmpty {
-                    UIPasteboard.general.string = filtered
+                if !displayed.isEmpty {
+                    UIPasteboard.general.string = displayed
                 }
-                TranscriptionStatus.shared.partialSnippet = filtered
+                TranscriptionStatus.shared.partialSnippet = displayed
                 ShhhcribbleActivityManager.shared.update(snippet: liveActivitySnippet)
             }
         } catch {
@@ -783,6 +865,9 @@ actor TranscriptionService {
                 if let event = result.event {
                     let kind = event.kind == .speechStart ? "speechStart" : "speechEnd"
                     await TranscriptionStatus.shared.event("VAD \(kind) @ sample \(event.sampleIndex) p=\(String(format: "%.2f", result.probability))")
+                    if event.kind == .speechEnd {
+                        await maybeRotateChunk(triggerSource: "vad-speechEnd")
+                    }
                 }
             } catch {
                 await TranscriptionStatus.shared.event("VAD process err: \(error.localizedDescription)")
@@ -790,6 +875,73 @@ actor TranscriptionService {
             }
         }
         vadStreamState = state
+    }
+
+    /// Step C — chunk rotation. Triggered by VAD speechEnd events (when
+    /// `minTimeBetweenRotations` has elapsed) and by the time-based
+    /// hard cap (`maxTimeWithoutRotation`). Snapshots the current
+    /// `tdtBuffers`, transcribes via TDT, applies the filler +
+    /// substitution filters, appends to `committedChunks`, and clears
+    /// the buffer. Reentrancy-guarded via `rotating`.
+    ///
+    /// Skips silently if no manager, no buffers, or already rotating.
+    private func maybeRotateChunk(triggerSource: String) async {
+        guard !rotating else { return }
+        guard recording, !stopRequested, !cancelled else { return }
+        guard let m = tdtManager, !tdtBuffers.isEmpty else { return }
+        let startedAt = lastRotationAt ?? recordingStartedAt ?? Date()
+        let elapsed = Date().timeIntervalSince(startedAt)
+        // For VAD-triggered, require minTimeBetweenRotations so we don't
+        // fragment on every short pause. For the hard-cap path
+        // (triggerSource == "hard-cap") the caller already verified
+        // elapsed > maxTimeWithoutRotation, so we skip the gate.
+        if triggerSource != "hard-cap", elapsed < Self.minTimeBetweenRotations {
+            return
+        }
+        rotating = true
+        let snapshot = tdtBuffers
+        tdtBuffers.removeAll(keepingCapacity: true)
+        defer { rotating = false }
+
+        await TranscriptionStatus.shared.event("Rotating chunk (\(triggerSource), \(snapshot.count) buffers, \(String(format: "%.1f", elapsed))s)")
+        guard let merged = Self.concatenate(buffers: snapshot) else {
+            // Couldn't merge — give up on this rotation, audio is lost.
+            // Recording continues; next rotation will catch fresh buffers.
+            return
+        }
+        var decoderState = TdtDecoderState.make()
+        let raw: String
+        do {
+            let result = try await m.transcribe(merged, decoderState: &decoderState)
+            raw = result.text
+        } catch {
+            await TranscriptionStatus.shared.event("Rotation TDT err: \(error.localizedDescription)")
+            return
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            // Store RAW (unfiltered) — performRecording's final filter
+            // pass applies once to the stitched output. Storing raw
+            // avoids double-filtering and keeps the filter behaviour
+            // consistent if the user toggles filterFillerWords mid-
+            // recording. Display still shows the filtered version
+            // (see tdtLiveTranscribe + the MainActor block below).
+            committedChunks.append(trimmed)
+            // Refresh the displayed partial to include the new committed
+            // text (filtered for display). Without this the user sees
+            // the live preview suddenly become empty (tdtBuffers cleared)
+            // then re-populate; with this the committed prefix carries
+            // forward.
+            let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
+            let joinedRaw = committedChunks.joined(separator: " ")
+            let afterFiller = filterOn ? FillerWordFilter.filter(joinedRaw) : joinedRaw
+            let displayedSoFar = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
+            await TranscriptionStatus.shared.event("Committed chunk: \"\(displayedSoFar.suffix(80))\"")
+            await MainActor.run {
+                TranscriptionStatus.shared.partialSnippet = displayedSoFar
+            }
+        }
+        lastRotationAt = Date()
     }
 
     /// Reset VAD streaming state at the start of a new recording. Called
