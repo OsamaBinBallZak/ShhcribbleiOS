@@ -35,16 +35,22 @@ struct RecordingOverlayView: View {
 
     private var recordingContent: some View {
         VStack(spacing: 20) {
+            if status.launchedViaURL {
+                SwipeBackHint()
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+            }
+
             if let title = status.appendTargetTitle {
                 AppendingToChip(title: title)
                     .padding(.horizontal, 24)
-                    .padding(.top, 24)
+                    .padding(.top, status.launchedViaURL ? 0 : 24)
             }
 
             Text(timeString)
                 .font(.system(size: 17, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .padding(.top, status.appendTargetTitle == nil ? 24 : 0)
+                .padding(.top, (status.appendTargetTitle == nil && !status.launchedViaURL) ? 24 : 0)
 
             SoundwaveBars(audioLevel: status.audioLevel)
                 .frame(width: 200, height: 72)
@@ -145,6 +151,36 @@ private struct AppendingToChip: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Adding to note: \(title)")
+    }
+}
+
+/// Shown at the top of the recording overlay when the recording was
+/// launched via URL scheme from the keyboard extension (i.e.
+/// `TranscriptionStatus.launchedViaURL == true`). Mirrors what Wispr
+/// Flow / Aqua Voice surface after their iOS-26.4-imposed manual
+/// swipe-back UX: tells the user how to get back to their previous app
+/// while recording continues in the background.
+private struct SwipeBackHint: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text("Swipe right on the bottom bar to return — recording continues")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.tertiarySystemFill))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Swipe right on the bottom bar to return to your previous app. Recording continues in the background.")
     }
 }
 

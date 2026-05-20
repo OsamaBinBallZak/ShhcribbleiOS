@@ -4,6 +4,26 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## First-record-after-install sometimes records but doesn't transcribe
+
+**Symptom.** On the very first recording attempt after a fresh install (devicectl or TestFlight), the recording overlay shows the waveform animating (audio is being captured) but the live transcript stays empty / shows "Hello?" or similar near-noise output, and the saved note is empty or near-empty. Cancel, tap play again — works perfectly on second attempt.
+
+Status row says "Model ready" before the first tap. So the user-facing readiness indicator says go, but TDT isn't actually warm enough yet to produce real text on the first inference call. Likely an ANE warm-up cost: the model is loaded but the first inference pass takes longer than a normal one (CoreML / Apple Neural Engine cold-start) and may produce degraded output if cut short.
+
+Seen 2026-05-19 and 2026-05-20. Reproducible enough to mention to users as a workaround ("if the first recording doesn't work, force-quit and try again") but worth tracking for a real fix.
+
+**Possible fixes (sketches, not researched):**
+
+1. **Warm the TDT decoder on launch.** After `ensureModelLoaded()` completes, run a one-time synthetic-audio inference pass (e.g. transcribe 0.5 s of silence) so the ANE compute graph is fully primed before the user taps play. Adds ~100-500 ms to launch but invisible (happens behind onboarding / splash).
+
+2. **Detect the failure mode and silently retry.** If the first finish returns empty or below a confidence threshold AND `lastRotationAt == nil` (first inference), re-run the transcribe on the same buffer. Slower than (1) for the user but doesn't depend on a clean warm-up path.
+
+3. **Hold "Model ready" status until a warm-up inference completes.** Cleanest from a state-machine perspective — the readiness indicator stops lying. But means the user waits ~500 ms longer to see "Ready". Acceptable if the model-download progress ring extends to cover this phase too.
+
+**When to revisit:** if the workaround "tap cancel then tap play again" stays annoying. Right now it's a documented one-time-per-install gotcha.
+
+---
+
 ## Live-preview text stability strategy revisit
 
 **Context.** During recording, `TypingViewModel` (`ShhhcribbleiOS/Features/Recording/RecordingView.swift`) currently uses a four-case hybrid (Tier 6 Step E.2, 2026-05-20): strict prefix → append; normalised prefix → snap in place; small content revision (≤15 char rewind) → honour the rewind; large content revision → reject, with a `rejectionLimit=4` safety valve that force-accepts the next update after 4 consecutive rejections (~2.8 s of staleness max).
