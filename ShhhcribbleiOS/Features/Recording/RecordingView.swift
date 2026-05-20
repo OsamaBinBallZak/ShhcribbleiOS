@@ -469,10 +469,42 @@ final class TypingViewModel: ObservableObject {
     private var typingTask: Task<Void, Never>?
 
     func updateTarget(_ newText: String) {
+        // Three cases, in order of preference:
+        //
+        // 1. Strict prefix match — the new partial just appended to the end.
+        //    Standard append-typing animation.
+        //
+        // 2. Normalised prefix match — the new text is a strict prefix of the
+        //    displayed once we strip punctuation + casing. This is what TDT
+        //    does on most iterations: it re-transcribes the full audio buffer
+        //    every ~700 ms, and the model freely revises punctuation /
+        //    capitalisation as more context arrives. The content didn't
+        //    change, only the format. Adopt the new text *in place* up to
+        //    the current displayed length and let the typer continue forward
+        //    into the new tail. The reader sees a soft "Hello" → "Hello,"
+        //    rather than a flicker-and-rewind.
+        //
+        //    Pre-streaming-removal (Phase J Tier 5), this normalised path
+        //    wasn't needed because the StreamingEouAsrManager produced
+        //    stable left-to-right partials within a chunk. TDT's re-
+        //    transcribe-the-whole-thing approach revises freely, which
+        //    triggered the legacy rewind logic on most iterations and
+        //    showed up as visible flicker — see Item 1 in plan
+        //    yes-the-plan-is-steady-spindle.md.
+        //
+        // 3. Genuine content revision — engine actually changed words. Keep
+        //    the legacy rewind-to-common-prefix behaviour.
         if newText.hasPrefix(displayedText) {
             targetText = newText
+        } else if Self.normalise(newText).hasPrefix(Self.normalise(displayedText)) {
+            // Pure formatting revision. Snap displayed to the new text's
+            // first `displayedText.count` characters; from here the typer
+            // appends the rest as usual.
+            let snapLen = min(displayedText.count, newText.count)
+            displayedText = String(newText.prefix(snapLen))
+            targetText = newText
         } else {
-            // Engine revised earlier words — rewind to common prefix and resume.
+            // Content revised. Walk back to common prefix and resume.
             var commonLen = 0
             let dChars = Array(displayedText)
             let nChars = Array(newText)
@@ -511,5 +543,17 @@ final class TypingViewModel: ObservableObject {
         typingTask = nil
         displayedText = ""
         targetText = ""
+    }
+
+    /// Strip punctuation and lowercase. Used by `updateTarget` to detect
+    /// when a TDT re-transcribe revised only the formatting of the text,
+    /// not the actual words. The two strings are byte-different but
+    /// content-equivalent, so we adopt the new one in place without the
+    /// rewind animation that would otherwise flicker.
+    private static func normalise(_ s: String) -> String {
+        s.lowercased().unicodeScalars.filter { scalar in
+            !CharacterSet.punctuationCharacters.contains(scalar)
+                && !CharacterSet.symbols.contains(scalar)
+        }.reduce(into: "") { $0.append(Character($1)) }
     }
 }
