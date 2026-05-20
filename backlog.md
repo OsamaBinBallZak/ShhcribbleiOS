@@ -4,6 +4,32 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## Superwhisper-parity cold-start UX
+
+Tiuri sent reference screenshots 2026-05-20. Three distinct pieces of polish to consider:
+
+### 1. Full-screen cold-start landing page (vs our current small pill)
+
+After tapping the keyboard mic, Superwhisper foregrounds with a dark full-screen takeover: phone-illustration with a finger pointing at the bottom bar, big text "Superwhisper is 🟠 on. Swipe to return to the keyboard.", plus a CTA underneath ("You can also install the shortcut to avoid this step in the future"). Way more visual + clear than our `SwipeBackHint` rectangle at the top of the existing recording overlay.
+
+Could lift the existing recording overlay design with a new dedicated `ColdStartTakeover` view that renders ONLY when `launchedViaURL == true` AND `phase == .recording` AND there's no transcript yet — same illustration approach, swap in real `partialSnippet` once it starts arriving.
+
+### 2. Ship a pre-made Shortcut to skip the cold-start dance entirely
+
+Their bundle includes a `.shortcut` file (`Toggle Superwhisper Dictation.shortcut`) — a Shortcuts.app workflow that wraps their `Toggle Recording` AppIntent. Invoking the shortcut from anywhere (Back Tap, Action Button, widget) toggles recording WITHOUT foregrounding the app — bypasses the iOS-26.4 forced foreground entirely.
+
+We already have `StartRecordingIntent` + `ToggleRecordingIntent` defined and registered. Users can build this in Shortcuts themselves today; the gap is discoverability + one-tap install.
+
+To match SW: build a `Shhhcribble.shortcut` file in `Shortcuts.app` on Mac wrapping our `ToggleRecordingIntent`, export it, ship inside the app bundle, expose via deep-link button on the cold-start landing page ("Install the shortcut to skip this screen in the future"). The deep link URL is `shortcuts://import-shortcut?url=...&name=Shhhcribble`.
+
+### 3. Stop-button animation + start/stop sound effects
+
+Superwhisper's stop button has a rotating ring around it while recording — confirms visually that the recording is still live. They also play subtle start/end audio cues so the user knows when the recording has begun and ended (especially useful after the foreground dance, where the user is staring at their phone going "did it start?").
+
+For us: small SF Symbol or shape animation around the Stop button in the recording overlay (rotating circle, pulsing ring, etc.), plus drop `start.caf` and `end.caf`-equivalent audio files in the bundle and play via `AVAudioPlayer` at the start/stop transitions. Both should respect the silent switch.
+
+---
+
 ## First-record-after-install sometimes records but doesn't transcribe
 
 **Symptom.** On the very first recording attempt after a fresh install (devicectl or TestFlight), the recording overlay shows the waveform animating (audio is being captured) but the live transcript stays empty / shows "Hello?" or similar near-noise output, and the saved note is empty or near-empty. Cancel, tap play again — works perfectly on second attempt.
