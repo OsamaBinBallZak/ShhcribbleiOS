@@ -49,6 +49,12 @@ struct RecordingOverlayView: View {
             SoundwaveBars(audioLevel: status.audioLevel)
                 .frame(width: 200, height: 72)
 
+            if status.audioDeviceUnavailable {
+                AudioDeviceUnavailableBanner()
+                    .padding(.horizontal, 24)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             ScrollingLiveText(text: status.partialSnippet)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 28)
@@ -139,6 +145,38 @@ private struct AppendingToChip: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Adding to note: \(title)")
+    }
+}
+
+/// Shown in the recording overlay when the audio engine is running
+/// but no buffers have arrived for ~1.5 s. Most common cause: AirPods
+/// are connected to another nearby device (often the user's Mac via
+/// Continuity audio) and haven't released the input to the phone yet.
+/// Auto-clears as soon as buffers start flowing.
+private struct AudioDeviceUnavailableBanner: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Waiting for audio device…")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("AirPods or other Bluetooth headset may be in use by another device.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.tertiarySystemFill))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Waiting for audio device. AirPods or other Bluetooth headset may be in use by another device.")
     }
 }
 

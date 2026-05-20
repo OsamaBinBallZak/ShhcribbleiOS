@@ -97,6 +97,14 @@ final class TranscriptionStatus: ObservableObject {
     /// so the user knows the transcript will be appended rather than create
     /// a fresh note. Cleared on every terminal state.
     @Published var appendTargetTitle: String?
+    /// True when the audio engine is running but no buffers have arrived
+    /// for the staleness threshold (~1.5 s). Most common cause: AirPods
+    /// held by another device (Mac via Continuity), or the user pulled
+    /// the AirPods just as recording started. Set by AudioRecorder's
+    /// watchdog timer; the recording overlay reads this and renders a
+    /// "Waiting for audio device…" banner so the user understands why
+    /// the waveform isn't moving.
+    @Published var audioDeviceUnavailable: Bool = false
 
     /// Single source of truth derives from `phase`. Existing call sites that
     /// only need to know "is the engine actively capturing audio" keep

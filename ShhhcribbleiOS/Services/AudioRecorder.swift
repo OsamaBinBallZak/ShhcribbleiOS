@@ -21,6 +21,18 @@ final class AudioRecorder {
     private var smoothedLevel: Float = 0
     private var routeChangeObserver: NSObjectProtocol?
 
+    /// Watchdog state for the "audio device unavailable" indicator.
+    /// AVAudioEngine can be running (no errors thrown) and yet deliver
+    /// no buffers — most often when AirPods are held by another nearby
+    /// device (e.g. Mac via Continuity audio). We poll every ~300 ms;
+    /// if `lastBufferAt` is older than `audioStaleThreshold`, publish
+    /// `audioDeviceUnavailable = true` to TranscriptionStatus so the
+    /// recording overlay can render a "Waiting for audio…" banner.
+    private var lastBufferAt: Date?
+    private var startedAt: Date?
+    private var watchdogTimer: Timer?
+    private static let audioStaleThreshold: TimeInterval = 1.5
+
     func start(
         onBuffer: @escaping (AVAudioPCMBuffer) -> Void,
         onLevel: @escaping (Float) -> Void = { _ in }
@@ -59,7 +71,34 @@ final class AudioRecorder {
         // switch to "Stop" mode while the user is in another app.
         KeyboardBridge.setRecordingActive(true)
 
+        // Staleness watchdog. Resets state, then polls every 300 ms.
+        // Publishes `audioDeviceUnavailable` to TranscriptionStatus when
+        // no buffers have arrived for `audioStaleThreshold` seconds.
+        startedAt = Date()
+        lastBufferAt = nil
+        watchdogTimer?.invalidate()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            self?.checkAudioStaleness()
+        }
+        // Make sure stale flag starts false — user just tapped record,
+        // no need to show "waiting" instantly.
+        Task { @MainActor in
+            TranscriptionStatus.shared.audioDeviceUnavailable = false
+        }
+
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    private func checkAudioStaleness() {
+        guard isRunning else { return }
+        let referenceTime = lastBufferAt ?? startedAt ?? Date()
+        let staleFor = Date().timeIntervalSince(referenceTime)
+        let isUnavailable = staleFor > Self.audioStaleThreshold
+        Task { @MainActor in
+            if TranscriptionStatus.shared.audioDeviceUnavailable != isUnavailable {
+                TranscriptionStatus.shared.audioDeviceUnavailable = isUnavailable
+            }
+        }
     }
 
     func stop() {
@@ -79,6 +118,14 @@ final class AudioRecorder {
         onBuffer = nil
         onLevel = nil
         smoothedLevel = 0
+
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+        lastBufferAt = nil
+        startedAt = nil
+        Task { @MainActor in
+            TranscriptionStatus.shared.audioDeviceUnavailable = false
+        }
 
         KeyboardBridge.setRecordingActive(false)
     }
@@ -132,6 +179,10 @@ final class AudioRecorder {
     // MARK: - Buffer handling
 
     private func handleBuffer(_ buffer: AVAudioPCMBuffer) {
+        // Mark this buffer's arrival for the staleness watchdog. The
+        // poll loop will clear `audioDeviceUnavailable` on its next
+        // tick now that lastBufferAt is fresh.
+        lastBufferAt = Date()
         // RMS for the audio level visualizer.
         if let ch = buffer.floatChannelData?[0] {
             let count = Int(buffer.frameLength)
