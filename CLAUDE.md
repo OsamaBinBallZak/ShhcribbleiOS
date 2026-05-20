@@ -428,6 +428,17 @@ If a future change is tempted to introduce a VM "for consistency" — don't. Add
 
 These are gotchas and conventions discovered while building Sprint 1 + the recording UX. Read before extending.
 
+### TestFlight upload — pick "TestFlight Internal Only", NOT "App Store Connect"
+
+Every previous session has reflexively pointed Tiuri at the **App Store Connect** distribution method in Xcode Organizer → Distribute App. That option works but is overkill for our actual use case (small internal testing group, no public App Store release planned in the near term). Pick **TestFlight Internal Only** instead:
+
+- Restricted to App Store Connect team members (Tiuri + a couple of internal testers — exactly the audience we want)
+- Skips most of the App Store metadata machinery (no need for screenshots, marketing description, age rating, etc.)
+- Slightly faster Apple processing on the back end
+- "What to Test" notes still editable in App Store Connect → My Apps → Shhhcribble → TestFlight tab after upload
+
+If we ever want to route a future build to external beta testers (needs Beta App Review) or submit to the App Store, upload that build as "App Store Connect" instead. Per-build choice — not a one-way door.
+
 ### Build & install on a physical iPhone (CLI)
 
 Xcode UI is fine, but Cmd-R from Xcode silently fails when the App Group entitlement is in play under a free Personal Team. Direct `devicectl` install is the reliable path during development:
