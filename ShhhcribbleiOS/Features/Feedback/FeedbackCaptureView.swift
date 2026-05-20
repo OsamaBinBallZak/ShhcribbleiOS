@@ -89,8 +89,11 @@ struct FeedbackCaptureView: View {
     }
 
     private var recorderRow: some View {
-        HStack(spacing: 12) {
-            Button(action: toggleRecord) {
+        // Whole-row Button so taps anywhere on the row trigger recording.
+        // Tiuri called out 2026-05-20 that only-the-icon-tappable wasn't
+        // discoverable.
+        Button(action: toggleRecord) {
+            HStack(spacing: 12) {
                 ZStack {
                     Circle()
                         .fill(phase == .recording ? Color.red.opacity(0.15) : Color.accentColor.opacity(0.15))
@@ -99,31 +102,37 @@ struct FeedbackCaptureView: View {
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(phase == .recording ? .red : Color.accentColor)
                 }
-            }
-            .buttonStyle(.plain)
-            .disabled(phase == .transcribing)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statusLine).font(.body.weight(.medium))
-                if phase == .recording || recorder.elapsed > 0 {
-                    Text(formatTime(recorder.elapsed))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statusLine)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                    if phase == .recording || recorder.elapsed > 0 {
+                        Text(formatTime(recorder.elapsed))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if phase == .transcribing {
+                    ProgressView().controlSize(.small)
                 }
             }
-            Spacer()
-            if phase == .transcribing {
-                ProgressView().controlSize(.small)
-            }
+            .contentShape(Rectangle())   // make the empty Spacer area tappable too
         }
+        .buttonStyle(.plain)
+        .disabled(phase == .transcribing)
     }
 
     private var statusLine: String {
         switch phase {
-        case .idle: return transcript.isEmpty ? "Tap to record" : "Re-record"
+        // Distinct copy when transcript already exists: tapping again
+        // APPENDS to it (per Tiuri's 2026-05-20 feedback — overwriting
+        // the previous capture was unexpected).
+        case .idle: return transcript.isEmpty ? "Tap to record" : "Tap to add more"
         case .recording: return "Recording…"
         case .transcribing: return "Transcribing…"
-        case .review: return "Done — review below"
+        case .review: return transcript.isEmpty ? "Done" : "Done — review below"
         }
     }
 
@@ -140,8 +149,10 @@ struct FeedbackCaptureView: View {
 
     private func startRecording() {
         errorMessage = nil
-        // Reset prior transcript so a re-record doesn't leak into the new one.
-        transcript = ""
+        // Don't reset the prior transcript — subsequent recordings append
+        // (Tiuri's 2026-05-20 feedback: overwriting on re-tap was
+        // unexpected). User can clear / edit the transcript field
+        // manually if they want a clean slate.
         do {
             try recorder.start()
             phase = .recording
@@ -158,6 +169,8 @@ struct FeedbackCaptureView: View {
             return
         }
         phase = .transcribing
+        // Capture existing transcript so the async transcribe can append to it.
+        let existing = transcript
         Task {
             do {
                 let text = try await TranscriptionService.shared.transcribeOneShot(audioFileURL: url)
@@ -165,7 +178,16 @@ struct FeedbackCaptureView: View {
                 let afterFiller = filterOn ? FillerWordFilter.filter(text) : text
                 let filtered = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
                 await MainActor.run {
-                    transcript = filtered
+                    // Append: if there was already a transcript, join with a
+                    // space + the new text. Otherwise this is the first
+                    // recording so just take the filtered result as-is.
+                    if existing.isEmpty {
+                        transcript = filtered
+                    } else if !filtered.isEmpty {
+                        transcript = existing + " " + filtered
+                    } else {
+                        transcript = existing  // new recording produced nothing
+                    }
                     phase = .review
                 }
             } catch {

@@ -358,18 +358,45 @@ B3. ✅ Continue-recording mini FAB. New `NoteFocus` `@MainActor ObservableObjec
 B4. ✅ Markdown view/edit auto-toggle on `NoteDetailView`. New [String+Markdown.swift](ShhhcribbleiOS/Extensions/String+Markdown.swift) — `containsMarkdownSyntax: Bool` extension via cached `NSRegularExpression` matching line-leading `# `/`## `/`### `, `- `, `* `, `\d+\. ` OR `[text](url)` anywhere. `.onAppear` sets `isEditing = !note.transcript.containsMarkdownSyntax` so plain transcripts open in the existing TextEditor and markdown-y notes open in a rendered `Text(AttributedString(markdown:options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))` view. Tapping the rendered text flips back to edit mode (`onTapGesture { isEditing = true }`). The earlier pencil/eye toolbar button was removed — tap-to-edit is the only affordance.
 B5. ✅ Sub-feature B (image attachments) deliberately deferred. Per the [PR-bundling memory](file:.claude/projects/-Users-hendri-ShhhcribbleiOS/memory/feedback_pr_bundling_strategy.md), image attachments require an `Attachment` `@Model` + `@Relationship`, which forces the first `VersionedSchema` migration. That gets its own PR + TestFlight cycle so any migration regression is observable in isolation. Sprint 4.5+1 ships only the additive view-layer + service-layer changes.
 
-**Sprint 5 — Keyboard extension (Phase 2)**
-19. **PREREQ — Restore App Group + paid Developer Program signing.**
-    - Enrol in paid Apple Developer Program; pin paid team ID in `project.yml`.
-    - Restore `application-groups` entry to `ShhhcribbleiOS.entitlements` and `ShhhcribbleWidget.entitlements`; add new `ShhhcribbleKeyboard.entitlements` with the same group.
-    - Flip `openAppWhenRun: true` → `false` on `StopRecordingIntent` and `CancelRecordingIntent`.
-    - Drop the `.widgetURL(shhhcribble://open)` lock-screen workaround — per-button intents take over again.
-    - Verify install on device end-to-end before adding any keyboard code (see Working notes — App Group + Personal Team).
-20. `ShhhcribbleKeyboard` target + `UIInputViewController`
-21. App Group microphone handoff flow (main app records, writes transcript to shared container; keyboard reads from container)
-22. `UITextDocumentProxy` text injection — at this point ClipboardService snapshot/restore wraps the autopaste so the user's prior clipboard survives
-23. Cancel button in keyboard UI
-24. Onboarding update for keyboard setup (Settings → General → Keyboards)
+**Sprint 5 — Keyboard extension (Phase 2)** — ✅ shipped 2026-05-19 / 2026-05-20
+
+19. ✅ PREREQ — App Group + paid Developer Program signing restored (team `9W82X49JZS`).
+20. ✅ `ShhhcribbleKeyboard` target with `KeyboardInputViewController` (KeyboardKit free tier renders the QWERTY surface; our toolbar with the mic button sits above it).
+21. ✅ App Group microphone handoff (Darwin notifications + App Group polling, dual-transport for resilience).
+22. ✅ `UITextDocumentProxy` text injection on transcript-ready signal.
+23. ✅ Cancel + Stop buttons in keyboard UI.
+24. ✅ Onboarding refreshed (Sprint 5 Phase H / Plan items 5+6, 2026-05-20).
+
+**Phase J — cold-start from keyboard** — ✅ shipped 2026-05-20
+
+J1-3. ✅ App Group + paid signing + intent-foundation pre-reqs (commits `4295213`, `dc68711`, `1df51e4`, `21946cf`).
+J4. ✅ **The unlock.** `extensionContext.open` is documented Today-widget-only — iOS statically refuses it from a keyboard. Swapped to `EnvironmentValues().openURL(url)` (Itsuki's Apr 2026 pattern) and the cold-start started working immediately. Commits `2a67b20`, `03c1fc2`.
+J5. ✅ Streaming ASR mode removed — only Parakeet TDT v3 now. Eliminates the 26-second CoreML cold-compile that was wedging the audio actor on first-after-install. Plus Tier 5.1 fix for live-transcript flicker (normalised-prefix snap). Commits `f625058`, `1af94e8`.
+J6. ✅ VAD-based chunked transcription. Loads `FluidAudio.VadManager` alongside TDT, runs Silero VAD on incoming buffers, rotates `tdtBuffers` on detected `speechEnd` after 30 s elapsed (90 s hard cap). Fixes the long-recording memory crash. Steps A→E across commits `c1a58e8`, `19454b3`, `49b26a3`, `955c047`.
+J7. ✅ Polish pass — AirPods staleness banner (`2bcc823`), keyboard-cold-start swipe-back hint (`fab173d`), onboarding refresh + CLAUDE.md docs (`466f20c`).
+J8. ✅ In-app feedback feature — Settings → Feedback. Voice + optional pasted screenshot + optional note, stored as `Documents/Feedback/<uuid>/{metadata.json, screenshot.png}`. Multi-select + bulk email to `tiurihartog@icloud.com` with a `.zip` attachment of the raw folders, plus a post-send "delete from device?" prompt. See "Feedback feature" section below. Commit `79ba291` + uncommitted polish (toolbar split, append-on-tap, bulk email).
+
+---
+
+## Feedback feature (Sprint 5 / Phase J8)
+
+In-app voice feedback capture for dogfooding, completely separate from the user-facing `Note` flow. Lives in `ShhhcribbleiOS/Features/Feedback/`:
+
+- **`FeedbackStore.swift`** — file-based store rooted at `Documents/Feedback/`. Each item is a folder `<uuid>/` containing `metadata.json` (`{ createdAt, transcript, note, hasScreenshot, durationSeconds }`) and optionally `screenshot.png`. `@MainActor @Published items: [FeedbackItem]` for SwiftUI binding. Deliberately file-based, not SwiftData — these items are short-lived (collect → review → delete), no schema evolution likely, and file-based means `devicectl device copy from` and Files.app browsing both work transparently.
+- **`FeedbackCaptureView.swift`** — modal capture UI. Records via raw `AVAudioRecorder` (16 kHz PCM WAV, the format TDT likes natively), then calls `TranscriptionService.transcribeOneShot(audioFileURL:)` to get the text. Whole row is tappable (not just the mic icon). Subsequent recordings APPEND to the existing transcript (don't overwrite — Tiuri's 2026-05-20 feedback). Optional clipboard-screenshot paste + free-form note. Save writes the folder + commits to the store; temp WAV is discarded (we keep only the text + the screenshot).
+- **`FeedbackListView.swift`** — list of items, sorted newest first. Toolbar: "Select" (top-left, enters multi-select mode) + paperplane icon (send-all via `MFMailComposeViewController`, recipient hardcoded to `tiurihartog@icloud.com`) + "+" record-new (top-right). Tapping a row opens `FeedbackDetailView` for review + "Send to Tiuri" + delete-after-send.
+- **`TranscriptionService.transcribeOneShot(audioFileURL:)`** — one-shot batch transcribe added to the actor. Loads the file with `AVAudioFile`, hands the buffer to TDT, returns text. Doesn't touch `recording` state — pure batch operation. Independent of the main TDT live pipeline.
+
+**Access for review later** — three paths:
+
+1. User taps "Send N" or the paperplane button → email to Tiuri with body text + a `feedback.zip` attachment containing the raw folders (built via `NSFileCoordinator(readingItemAt:options: [.forUploading])` for Apple-blessed automatic zipping).
+2. Mac via `xcrun devicectl device copy from --domain-type appDataContainer --domain-identifier com.hendritiuri.shhhcribble --source /Documents/Feedback --destination ~/Desktop/feedback/`.
+3. Files.app → On My iPhone → Shhhcribble → Feedback. Enabled by `UIFileSharingEnabled = true` + `LSSupportsOpeningDocumentsInPlace = true` in Info.plist.
+
+**UX guardrails learned during the test session**:
+- Global play FAB (in `ContentView`) hides while the Feedback list is on-screen so its toolbar buttons are the only record affordances. Wired via `NoteFocus.hideGlobalPlayFAB` flag, set in `FeedbackListView.onAppear` / cleared on `.onDisappear`.
+- Email recipient hardcoded as `feedbackRecipientEmail` constant at the top of `FeedbackListView.swift` — change there when the recipient changes.
+- After successful send (mail-compose-finished delegate fires with `.sent`), prompt the user to delete the sent items from the device.
 
 ---
 
@@ -613,4 +640,4 @@ Logged at the end of Sprint 4 — none of these block TestFlight, but flagging s
 
 ---
 
-*Last updated: April 2026 — Sprint 4.5+1 (append-to-note, markdown view/edit auto-toggle, mini continue-recording FAB) shipped 2026-04-30.*
+*Last updated: 2026-05-20 — Sprint 5 / Phase J shipped end-to-end. Keyboard cold-start works (`EnvironmentValues().openURL` was the unlock). Streaming engine removed; single Parakeet TDT v3 with VAD-based chunk rotation. Live transcript flicker fixed via four-case hybrid in `TypingViewModel`. In-app feedback feature added under `ShhhcribbleiOS/Features/Feedback/`. See `HANDOFF.md` for current state, `backlog.md` for outstanding polish.*
