@@ -417,6 +417,8 @@ xcrun devicectl device install app \
 
 Get the device UDID with `xcrun devicectl list devices`. The `Failed to load provisioning paramter list...code=1002 "No provider was found"` warning that `devicectl` always emits is harmless — installation completes anyway.
 
+**Full Access resets on every `devicectl install`.** When you push a new build that replaces an existing Shhhcribble on the device, iOS silently turns off Allow Full Access on the keyboard extension. The keyboard remains enabled in the keyboards list, so it's easy to miss — but cold-start from the keyboard (`extensionContext.open` / `EnvironmentValues().openURL`) will silently no-op until you go back to Settings → General → Keyboard → Keyboards → Shhhcribble and toggle Allow Full Access on again. This is iOS behaviour, not a bug in our build. Burned ~10 min debugging it during the Phase J Tier 4 verification on 2026-05-20.
+
 ### Personal Team signing — pin the team ID in `project.yml`
 
 `xcodegen` regenerates the project on every run and **blanks out** the development team selection from the pbxproj. To stop the manual "set team in Xcode every time" loop, the Personal Team ID is pinned in [project.yml](project.yml) under each target's `settings.base`:

@@ -144,10 +144,11 @@ private struct KeyboardPage: View {
             symbolColor: accent,
             title: "Dictate from any app",
             primaryButton: ("Get Started", onFinish),
-            primaryTint: accent
+            primaryTint: accent,
+            secondaryButton: ("Open Keyboard Settings", openKeyboardSettings)
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("The Shhhcribble keyboard adds a push-to-talk mic next to your text. Hold it, speak, release — the transcript drops straight into the text field.")
+                Text("The Shhhcribble keyboard adds a mic button to any text field. Tap it and Shhhcribble opens to record; once you stop, the transcript drops into the text field where you were typing.")
                     .font(.body)
                     .foregroundStyle(.primary)
 
@@ -158,23 +159,36 @@ private struct KeyboardPage: View {
                     )
                     NumberedStep(
                         number: 2,
-                        text: "Tap Shhhcribble in the list, then enable Allow Full Access. Required to send the transcript back to your text field."
+                        text: "Tap Shhhcribble in the list, then enable Allow Full Access. Required for the keyboard to open Shhhcribble and return your transcript."
                     )
                     NumberedStep(
                         number: 3,
-                        text: "In any text field, long-press the globe to switch to Shhhcribble. Hold the blue mic to dictate."
+                        text: "In any text field, long-press the globe to switch to Shhhcribble, then tap the mic button."
                     )
                 }
 
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "info.circle.fill")
                         .foregroundStyle(accent)
-                    Text("iOS shows a small orange dot in the status bar while Shhhcribble keeps the mic ready for instant dictation. You can disable this in Settings → Keyboard, at the cost of slower keyboard recordings.")
+                    Text("Optional: enable \"Keep keyboard ready\" in Shhhcribble's Settings to skip the app-switch entirely. iOS shows a small orange status-bar dot while the mic stays warm.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 4)
             }
+        }
+    }
+
+    /// Attempts to deep-link to Settings → General → Keyboard → Keyboards
+    /// via the unofficial `App-Prefs:` URL. This works on some iOS
+    /// versions and is silently ignored on others — Apple doesn't
+    /// guarantee it. If it fails, the on-screen instructions above
+    /// guide the user manually. We don't fall back to
+    /// `UIApplication.openSettingsURLString` because that goes to
+    /// Shhhcribble's own Settings page, not the Keyboards list.
+    private func openKeyboardSettings() {
+        if let url = URL(string: "App-Prefs:General&path=Keyboard/KEYBOARDS") {
+            UIApplication.shared.open(url)
         }
     }
 }
