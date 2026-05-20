@@ -39,6 +39,7 @@
 		8DB2514900940BDCD6CD53C8 /* ShhhcribbleLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2015BF4BDACAAEAB1ADBEDA0 /* ShhhcribbleLiveActivity.swift */; };
 		93CF5A5E042AF5427B02C654 /* AudioInterruptionObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553D8890C795CDE235977EFD /* AudioInterruptionObserver.swift */; };
 		9DDE601FC10439667FD0C59B /* FillerWordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7EE9617C3C7A0932795E033 /* FillerWordsView.swift */; };
+		A5BF37244BDD9A840A27DC64 /* OpenURLCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40EADE381F8C5CA4D22D073D /* OpenURLCapture.swift */; };
 		AE47FFD5C0433E6E197097D1 /* ShhhcribbleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A660C5D593C571BE20F2F69E /* ShhhcribbleApp.swift */; };
 		B2DC6A9E4BB42904174465C6 /* NoteDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 226236F0C41379F9E638673C /* NoteDetailView.swift */; };
 		B6B8018E3F1EBEF46442FB99 /* ShhhcribbleWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F03C07BF30107CC41CC0D9 /* ShhhcribbleWidgetBundle.swift */; };
@@ -132,6 +133,7 @@
 		3084FA0CA020E42C4A01DE8E /* SubstitutionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubstitutionsView.swift; sourceTree = "<group>"; };
 		33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailViewModel.swift; sourceTree = "<group>"; };
 		3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
+		40EADE381F8C5CA4D22D073D /* OpenURLCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenURLCapture.swift; sourceTree = "<group>"; };
 		46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordControlWidget.swift; sourceTree = "<group>"; };
 		46DB7DD6613AE5315B6E4A04 /* ToggleRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleRecordingIntent.swift; sourceTree = "<group>"; };
 		4853708B504A76F209891E01 /* KeyboardBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardBridge.swift; sourceTree = "<group>"; };
@@ -357,6 +359,7 @@
 			children = (
 				55FC191D0172714C04A3D24F /* KeyboardRootView.swift */,
 				F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */,
+				40EADE381F8C5CA4D22D073D /* OpenURLCapture.swift */,
 			);
 			path = ShhhcribbleKeyboard;
 			sourceTree = "<group>";
@@ -568,6 +571,7 @@
 			files = (
 				82D25E7788D3FA316053B15D /* KeyboardRootView.swift in Sources */,
 				D82DDEAA89E30B8359D041B9 /* KeyboardViewController.swift in Sources */,
+				A5BF37244BDD9A840A27DC64 /* OpenURLCapture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

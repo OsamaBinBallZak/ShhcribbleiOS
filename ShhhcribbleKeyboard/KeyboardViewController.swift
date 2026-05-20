@@ -22,6 +22,11 @@ final class KeyboardViewController: KeyboardInputViewController {
 
     private let toolbarState = KeyboardState()
     private var pollTimer: Timer?
+    /// Captured from `@Environment(\.openURL)` in the SwiftUI keyboard
+    /// root via `OpenURLCapture`. Phase J Tier 4b: this is the
+    /// Apple-blessed openURL path from a keyboard extension. See
+    /// `openContainingApp(url:)` for the rationale.
+    private var capturedOpenURL: OpenURLAction?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -36,24 +41,28 @@ final class KeyboardViewController: KeyboardInputViewController {
         setupKeyboardView { [weak self] controller in
             guard let self else { return AnyView(EmptyView()) }
             return AnyView(
-                VStack(spacing: 0) {
-                    ShhhcribbleToolbar(
-                        state: self.toolbarState,
-                        onVoice: { [weak self] in self?.handleVoiceTap() },
-                        onStopActive: { [weak self] in self?.handleStopActiveRecording() }
-                    )
-                    .padding(.horizontal, 4)
-                    .padding(.top, 4)
+                OpenURLCapture(onCapture: { [weak self] action in
+                    self?.capturedOpenURL = action
+                }) {
+                    VStack(spacing: 0) {
+                        ShhhcribbleToolbar(
+                            state: self.toolbarState,
+                            onVoice: { [weak self] in self?.handleVoiceTap() },
+                            onStopActive: { [weak self] in self?.handleStopActiveRecording() }
+                        )
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4)
 
-                    KeyboardView(
-                        state: controller.state,
-                        services: controller.services,
-                        buttonContent: { $0.view },
-                        buttonView: { $0.view },
-                        collapsedView: { $0.view },
-                        emojiKeyboard: { $0.view },
-                        toolbar: { _ in EmptyView() }   // we render our own
-                    )
+                        KeyboardView(
+                            state: controller.state,
+                            services: controller.services,
+                            buttonContent: { $0.view },
+                            buttonView: { $0.view },
+                            collapsedView: { $0.view },
+                            emojiKeyboard: { $0.view },
+                            toolbar: { _ in EmptyView() }   // we render our own
+                        )
+                    }
                 }
             )
         }
@@ -118,18 +127,28 @@ final class KeyboardViewController: KeyboardInputViewController {
     }
 
     private func openContainingApp(url: URL) {
-        // Phase J Tier 4 — `extensionContext.open` is documented Today-widget-only
-        // and iOS statically refuses it from a keyboard extension (synchronous
-        // false return in ~200µs, never reaches LaunchServices). The working
-        // path on iOS 18+ is SwiftUI's openURL action — instantiating
-        // `EnvironmentValues()` directly bypasses needing a View context.
-        // Apple DTS thread 65621 + Itsuki's April 2026 writeup + getdictus,
-        // Vowrite, TypeWhisper open-source keyboards all confirm this is the
-        // documented + production pattern.
-        KeyboardBridge.debug("openContainingApp via EnvironmentValues().openURL url=\(url.absoluteString)")
-        Task { @MainActor in
-            EnvironmentValues().openURL(url)
-            KeyboardBridge.debug("openContainingApp dispatched (no completion handler — openURL is fire-and-forget)")
+        // Phase J Tier 4b — Apple-blessed pattern: SwiftUI's openURL action
+        // captured from `@Environment(\.openURL)` in the keyboard root view
+        // via `OpenURLCapture`, stored on this controller, and invoked here.
+        //
+        // Why not `extensionContext.open(url)`: that API is documented
+        // Today-widget-only and iOS refuses it inside the extension runtime
+        // for `com.apple.keyboard-service` extensions (synchronous false
+        // return in ~200µs, never reaches LaunchServices). See Apple DTS
+        // thread 65621 + KeyboardKit 8.8.6+ release notes.
+        //
+        // Defensive fallback: if the capture hasn't fired yet (shouldn't
+        // happen post-viewDidAppear, but theoretically possible during a
+        // racy early tap), use the `EnvironmentValues()` direct
+        // instantiation pattern. Same end behaviour; less idiomatic.
+        if let openURL = capturedOpenURL {
+            KeyboardBridge.debug("openContainingApp via captured @Environment(\\.openURL) url=\(url.absoluteString)")
+            openURL(url)
+        } else {
+            KeyboardBridge.debug("openContainingApp fallback via EnvironmentValues().openURL url=\(url.absoluteString)")
+            Task { @MainActor in
+                EnvironmentValues().openURL(url)
+            }
         }
     }
 
