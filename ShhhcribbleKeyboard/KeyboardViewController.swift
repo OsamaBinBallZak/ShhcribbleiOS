@@ -118,9 +118,18 @@ final class KeyboardViewController: KeyboardInputViewController {
     }
 
     private func openContainingApp(url: URL) {
-        KeyboardBridge.debug("openContainingApp: extensionContext=\(extensionContext == nil ? "nil" : "ok") url=\(url.absoluteString)")
-        extensionContext?.open(url) { success in
-            KeyboardBridge.debug("extensionContext.open returned success=\(success)")
+        // Phase J Tier 4 — `extensionContext.open` is documented Today-widget-only
+        // and iOS statically refuses it from a keyboard extension (synchronous
+        // false return in ~200µs, never reaches LaunchServices). The working
+        // path on iOS 18+ is SwiftUI's openURL action — instantiating
+        // `EnvironmentValues()` directly bypasses needing a View context.
+        // Apple DTS thread 65621 + Itsuki's April 2026 writeup + getdictus,
+        // Vowrite, TypeWhisper open-source keyboards all confirm this is the
+        // documented + production pattern.
+        KeyboardBridge.debug("openContainingApp via EnvironmentValues().openURL url=\(url.absoluteString)")
+        Task { @MainActor in
+            EnvironmentValues().openURL(url)
+            KeyboardBridge.debug("openContainingApp dispatched (no completion handler — openURL is fire-and-forget)")
         }
     }
 
