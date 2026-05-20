@@ -10,9 +10,9 @@ final class ShhhcribbleActivityManager {
 
     // Throttle Live Activity updates. Apple recommends a maximum of a few
     // updates per second; pushing every transcript partial (which can fire
-    // tens of times per second under streaming ASR) would burn the budget
-    // and cause the system to drop or stall later updates. ~250 ms feels
-    // smooth in tandem with the snippet's `.contentTransition(.opacity)`.
+    // multiple times per second under TDT live transcription) would burn
+    // the budget and cause the system to drop or stall later updates.
+    // ~250 ms feels smooth in tandem with the snippet's `.contentTransition(.opacity)`.
     private var lastSnippetPushAt: Date?
     private var pendingSnippet: String?
     private var pendingTask: Task<Void, Never>?

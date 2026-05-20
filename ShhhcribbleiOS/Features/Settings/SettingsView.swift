@@ -5,7 +5,6 @@ import UIKit
 struct SettingsView: View {
     @AppStorage("filterFillerWords") private var filterFillerWords = true
     @AppStorage("useANE") private var useANE = true
-    @AppStorage("asrMode") private var asrModeRaw = AsrMode.streaming.rawValue
     @AppStorage("warmModeAlways") private var warmModeAlways = false
     @AppStorage("warmModeDurationSec") private var warmModeDurationSec = 60
     // TODO: remove after onboarding QA — see plan silly-karp
@@ -55,13 +54,12 @@ struct SettingsView: View {
 
     private var transcriptionStyleSection: some View {
         Section {
-            Picker("Style", selection: $asrModeRaw) {
-                ForEach(AsrMode.allCases, id: \.rawValue) { mode in
-                    Text(modeLabel(mode)).tag(mode.rawValue)
-                }
+            HStack {
+                Text("Engine")
+                Spacer()
+                Text("Parakeet TDT v3")
+                    .foregroundStyle(.secondary)
             }
-            .onChange(of: asrModeRaw) { _, _ in reload() }
-
             HStack {
                 Text("Status")
                 Spacer()
@@ -73,9 +71,9 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
             }
         } header: {
-            Text("Transcription style")
+            Text("Transcription")
         } footer: {
-            Text("Streaming shows transcribed text live with the lowest latency, but without punctuation. Parakeet TDT v3 produces punctuated, capitalised text and is more CPU-intensive. Both run fully on-device.")
+            Text("Parakeet TDT v3 runs fully on-device. Punctuated, capitalised output.")
         }
     }
 
@@ -131,7 +129,9 @@ struct SettingsView: View {
     private var performanceSection: some View {
         Section {
             Toggle("Use Neural Engine", isOn: $useANE)
-                .onChange(of: useANE) { _, _ in reload() }
+                .onChange(of: useANE) { _, _ in
+                    Task { await TranscriptionService.shared.reloadModel() }
+                }
         } header: {
             Text("Performance")
         } footer: {
@@ -269,10 +269,6 @@ struct SettingsView: View {
 
     // MARK: - Helpers
 
-    private func reload() {
-        Task { await TranscriptionService.shared.reloadModel() }
-    }
-
     private func refreshPermissions() {
         micPermission = AVAudioApplication.shared.recordPermission
     }
@@ -285,13 +281,6 @@ struct SettingsView: View {
             substitutionCount = dict.count
         } else {
             substitutionCount = 0
-        }
-    }
-
-    private func modeLabel(_ mode: AsrMode) -> String {
-        switch mode {
-        case .streaming: return "Streaming (live, no punctuation)"
-        case .tdt:       return "Parakeet TDT v3 (punctuated)"
         }
     }
 

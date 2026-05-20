@@ -68,22 +68,13 @@ func humaniseModelLoadError(_ error: Error) -> String {
     return error.localizedDescription
 }
 
-enum AsrMode: String, CaseIterable, Sendable {
-    case streaming
-    case tdt
-
-    var displayName: String {
-        switch self {
-        case .streaming: return "Streaming (live, no punctuation)"
-        case .tdt: return "Parakeet TDT v3 (punctuated, post-stop)"
-        }
-    }
-
-    static var current: AsrMode {
-        let raw = UserDefaults.standard.string(forKey: "asrMode") ?? AsrMode.streaming.rawValue
-        return AsrMode(rawValue: raw) ?? .streaming
-    }
-}
+// Note: AsrMode (streaming + tdt) was removed 2026-05-20. We now use
+// only Parakeet TDT v3. The streaming engine had no punctuation, took
+// a slower path to first-result, and the dual-engine setup forced a
+// 26-second CoreML cold-compile on first switch to TDT — bad UX for
+// zero user-visible benefit. If we ever want streaming back, restore
+// the enum + the corresponding branches in loadModel / performRecording /
+// stopRecording (see git history pre-2026-05-20).
 
 @MainActor
 final class TranscriptionStatus: ObservableObject {
@@ -132,9 +123,7 @@ final class TranscriptionStatus: ObservableObject {
 actor TranscriptionService {
     static let shared = TranscriptionService()
 
-    private var streamingManager: StreamingEouAsrManager?
     private var tdtManager: AsrManager?
-    private var loadedMode: AsrMode?
 
     private var recorder: AudioRecorder?
     private var loadTask: Task<Void, Error>?
@@ -172,7 +161,6 @@ actor TranscriptionService {
     private var appendTargetId: UUID?
     private static let tdtLiveInterval: TimeInterval = 0.7
     private var streamContinuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
-    private var lastPartial = ""
     private var tdtBuffers: [AVAudioPCMBuffer] = []
 
     private var finishContinuation: CheckedContinuation<String, Never>?
@@ -188,21 +176,20 @@ actor TranscriptionService {
     }
 
     func ensureModelLoaded() async throws {
-        let desired = AsrMode.current
-        if loadedMode == desired, (streamingManager != nil || tdtManager != nil) { return }
+        if tdtManager != nil { return }
         if let loadTask {
             try await loadTask.value
             return
         }
         await TranscriptionStatus.shared.set(.loading)
-        await TranscriptionStatus.shared.event("Loading \(desired.rawValue) model…")
-        let task = Task { try await self.loadModel(mode: desired) }
+        await TranscriptionStatus.shared.event("Loading Parakeet TDT v3…")
+        let task = Task { try await self.loadModel() }
         loadTask = task
         do {
             try await task.value
             loadTask = nil
             await TranscriptionStatus.shared.set(.ready)
-            await TranscriptionStatus.shared.event("Model ready (\(desired.rawValue))")
+            await TranscriptionStatus.shared.event("Model ready")
         } catch {
             loadTask = nil
             await TranscriptionStatus.shared.set(.error(humaniseModelLoadError(error)))
@@ -211,7 +198,7 @@ actor TranscriptionService {
         }
     }
 
-    private func loadModel(mode: AsrMode) async throws {
+    private func loadModel() async throws {
         let mlConfig = MLModelConfiguration()
         let useANE = UserDefaults.standard.object(forKey: "useANE") as? Bool ?? true
         mlConfig.computeUnits = useANE ? .cpuAndNeuralEngine : .cpuOnly
@@ -236,38 +223,21 @@ actor TranscriptionService {
             }
         }
 
-        switch mode {
-        case .streaming:
-            let m = StreamingEouAsrManager(
-                configuration: mlConfig,
-                chunkSize: .ms320,
-                eouDebounceMs: 999_999 // effectively disabled; overlay tap stops
-            )
-            try await m.loadModels(to: nil, configuration: nil, progressHandler: progressHandler)
-            self.streamingManager = m
-        case .tdt:
-            let models = try await AsrModels.downloadAndLoad(
-                configuration: mlConfig,
-                version: .v3,
-                progressHandler: progressHandler
-            )
-            let m = AsrManager(config: .default)
-            try await m.loadModels(models)
-            self.tdtManager = m
-        }
-        self.loadedMode = mode
+        let models = try await AsrModels.downloadAndLoad(
+            configuration: mlConfig,
+            version: .v3,
+            progressHandler: progressHandler
+        )
+        let m = AsrManager(config: .default)
+        try await m.loadModels(models)
+        self.tdtManager = m
     }
 
     private func unloadCurrent() async {
-        if let m = streamingManager {
-            await m.cleanup()
-            streamingManager = nil
-        }
         if let m = tdtManager {
             await m.cleanup()
             tdtManager = nil
         }
-        loadedMode = nil
     }
 
     func reloadModel() async {
@@ -324,27 +294,17 @@ actor TranscriptionService {
         await TranscriptionStatus.shared.event("Drained buffers")
 
         var text = ""
-        switch loadedMode {
-        case .streaming:
-            if let m = streamingManager {
-                text = (try? await m.finish()) ?? ""
-            }
-            if text.isEmpty { text = lastPartial }
-        case .tdt:
-            if let m = tdtManager, !tdtBuffers.isEmpty {
-                await TranscriptionStatus.shared.event("TDT transcribing \(tdtBuffers.count) buffers…")
-                if let merged = Self.concatenate(buffers: tdtBuffers) {
-                    var decoderState = TdtDecoderState.make()
-                    do {
-                        let result = try await m.transcribe(merged, decoderState: &decoderState)
-                        text = result.text
-                    } catch {
-                        await TranscriptionStatus.shared.event("TDT error: \(error)")
-                    }
+        if let m = tdtManager, !tdtBuffers.isEmpty {
+            await TranscriptionStatus.shared.event("TDT transcribing \(tdtBuffers.count) buffers…")
+            if let merged = Self.concatenate(buffers: tdtBuffers) {
+                var decoderState = TdtDecoderState.make()
+                do {
+                    let result = try await m.transcribe(merged, decoderState: &decoderState)
+                    text = result.text
+                } catch {
+                    await TranscriptionStatus.shared.event("TDT error: \(error)")
                 }
             }
-        case .none:
-            break
         }
         await TranscriptionStatus.shared.event("Finish returned: \"\(text.prefix(200))\"")
 
@@ -376,7 +336,6 @@ actor TranscriptionService {
         feedTask?.cancel()
 
         tdtBuffers.removeAll(keepingCapacity: false)
-        lastPartial = ""
 
         // Resume the awaiter in recordAndTranscribe with empty text — the
         // `cancelled` flag is checked there to skip commit + SwiftData write.
@@ -423,7 +382,6 @@ actor TranscriptionService {
         recording = true
         stopRequested = false
         cancelled = false
-        lastPartial = ""
 
         try Task.checkCancellation()
 
@@ -602,7 +560,7 @@ actor TranscriptionService {
 
         try Task.checkCancellation()
 
-        await TranscriptionStatus.shared.event("Recording (\(loadedMode?.rawValue ?? "?"))…")
+        await TranscriptionStatus.shared.event("Recording…")
 
         // The stream and engine are now live. If a stop or cancel was
         // requested during the pre-engine init window (Darwin race), tear
@@ -613,61 +571,40 @@ actor TranscriptionService {
             recorder.stop()
             streamContinuation?.finish()
             streamContinuation = nil
-            // Fall through to the streaming/tdt switch below so the existing
-            // commit + cleanup path runs. The stop flag short-circuits any
-            // further sample accumulation.
+            // Fall through to the TDT setup below so the existing commit +
+            // cleanup path runs. The stop flag short-circuits any further
+            // sample accumulation.
         }
 
-        switch loadedMode {
-        case .streaming:
-            guard let manager = streamingManager else {
-                await abortRecording()
-                return
-            }
-            await manager.setPartialCallback { partial in
-                Task { await TranscriptionService.shared.handlePartial(partial) }
-            }
-            let feed = Task.detached {
-                for await buffer in buffers {
-                    do {
-                        _ = try await manager.process(audioBuffer: buffer)
-                    } catch {
-                        await TranscriptionStatus.shared.event("process err: \(error)")
-                    }
-                }
-            }
-            self.feedTask = feed
-
-        case .tdt:
-            // Accumulate buffers; separately, re-transcribe every ~1.5s so
-            // the clipboard stays fresh while the app is foreground. iOS
-            // blocks pasteboard writes from backgrounded apps, so we can't
-            // wait until after the user taps the back pill.
-            await MainActor.run {
-                TranscriptionStatus.shared.partialSnippet = "Recording…"
-            }
-            let feed = Task.detached {
-                for await buffer in buffers {
-                    await TranscriptionService.shared.appendTdtBuffer(buffer)
-                }
-            }
-            self.feedTask = feed
-
-            // Safety-net timer in case the buffer-arrival trigger misses
-            // (e.g. silence keeps the audio engine from delivering buffers).
-            let live = Task.detached(priority: .userInitiated) {
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: UInt64(Self.tdtLiveInterval * 1_000_000_000))
-                    if Task.isCancelled { break }
-                    await TranscriptionService.shared.tdtLiveTranscribe()
-                }
-            }
-            self.tdtLiveTask = live
-
-        case .none:
+        guard tdtManager != nil else {
             await abortRecording()
             return
         }
+
+        // Accumulate buffers; separately, re-transcribe every ~1.5s so
+        // the clipboard stays fresh while the app is foreground. iOS
+        // blocks pasteboard writes from backgrounded apps, so we can't
+        // wait until after the user taps the back pill.
+        await MainActor.run {
+            TranscriptionStatus.shared.partialSnippet = "Recording…"
+        }
+        let feed = Task.detached {
+            for await buffer in buffers {
+                await TranscriptionService.shared.appendTdtBuffer(buffer)
+            }
+        }
+        self.feedTask = feed
+
+        // Safety-net timer in case the buffer-arrival trigger misses
+        // (e.g. silence keeps the audio engine from delivering buffers).
+        let live = Task.detached(priority: .userInitiated) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(Self.tdtLiveInterval * 1_000_000_000))
+                if Task.isCancelled { break }
+                await TranscriptionService.shared.tdtLiveTranscribe()
+            }
+        }
+        self.tdtLiveTask = live
 
         let transcript: String = await withCheckedContinuation { cont in
             self.finishContinuation = cont
@@ -680,7 +617,6 @@ actor TranscriptionService {
         self.feedTask = nil
         self.tdtLiveTask?.cancel()
         self.tdtLiveTask = nil
-        if let m = streamingManager { await m.reset() }
 
         await TranscriptionStatus.shared.event("Got: \"\(transcript)\"")
 
@@ -794,26 +730,6 @@ actor TranscriptionService {
         guard TranscriptionStatus.shared.launchedViaURL else { return }
         TranscriptionStatus.shared.launchedViaURL = false
         TranscriptionStatus.shared.partialSnippet = ""
-    }
-
-    private func handlePartial(_ partial: String) async {
-        guard !partial.isEmpty else { return }
-        lastPartial = partial
-        let liveActivitySnippet = String(partial.suffix(200))
-        // Live pasteboard update: iOS silently drops pasteboard writes from
-        // backgrounded apps, so we push the transcript during recording
-        // while we're still foreground. By the time the user taps the back
-        // pill, the clipboard already holds the latest transcript.
-        let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-        let afterFiller = filterOn ? FillerWordFilter.filter(partial) : partial
-        let filtered = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
-        await MainActor.run {
-            ShhhcribbleActivityManager.shared.update(snippet: liveActivitySnippet)
-            TranscriptionStatus.shared.partialSnippet = filtered
-            if !filtered.isEmpty {
-                UIPasteboard.general.string = filtered
-            }
-        }
     }
 
     @MainActor

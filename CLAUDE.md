@@ -170,7 +170,7 @@ Sharing the VP lifecycle deadlocks the main thread on `AVAudioEngineConfiguratio
 
 Swift `actor` — thread-safe audio buffer access. One `AsrManager` loaded with Parakeet TDT v3 (~494 MB, downloaded once). Final transcription runs on `stop()`. Live preview (if implemented) polls the growing sample buffer every 3 s — do not use a pre-sized reusable buffer (see AudioSessionService buffer rule above).
 
-The streaming `StreamingEouAsrManager` (160 ms chunks) exists in FluidAudio but was authored against a voice-processing pipeline. If you want to add it later, verify it handles AirPods' 24 kHz stereo VP-free correctly before shipping.
+The streaming `StreamingEouAsrManager` (160 ms chunks) exists in FluidAudio but we don't use it — see the "Parakeet TDT v3 (only engine)" section below for the removal rationale.
 
 ---
 
@@ -251,7 +251,6 @@ struct ShhhcribbleShortcuts: AppShortcutsProvider {
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `asrMode` | String (`AsrMode.rawValue`) | `"streaming"` | Engine choice: `streaming` (StreamingEouAsrManager) or `tdt` (Parakeet TDT v3 via AsrManager) |
 | `filterFillerWords` | Bool | `true` | Strip um/uh/hmm etc. |
 | `customHotwords` | [String] | `[]` | Casing-rewrite list (NOT real engine biasing — see "Vocabulary pipeline" notes) |
 | `substitutionRules` | Data (JSON) | `{}` | Key-value find-replace dictionary |
@@ -498,18 +497,17 @@ The Live Activity waveform stays self-driven (sin wave via TimelineView) — pus
 
 **When the download fires.** [ShhhcribbleApp.init()](ShhhcribbleiOS/App/ShhhcribbleApp.swift) kicks off `Task.detached(priority: .userInitiated) { try? await TranscriptionService.shared.ensureModelLoaded() }` immediately at process start — in parallel with onboarding, before the user taps anything. By the time someone gets through 3 onboarding screens the streaming model (smaller) is usually cached; TDT v3 (~494 MB) takes longer but still front-loads against onboarding rather than the play button. `recordAndTranscribe` also `async let modelReady = ensureModelLoaded()` as a defensive second trigger, so a recording started before the load finishes still resolves correctly.
 
-**Progress reporting.** FluidAudio exposes a `progressHandler: DownloadUtils.ProgressHandler?` on both `StreamingEouAsrManager.loadModels(to:configuration:progressHandler:)` and `AsrModels.downloadAndLoad(...)`. The handler streams `DownloadProgress { fractionCompleted, phase }` where `phase ∈ {.listing, .downloading(completedFiles, totalFiles), .compiling(modelName)}`. We publish `fractionCompleted` to `TranscriptionStatus.modelDownloadProgress` only during the `.downloading` phase — listing is sub-second and compiling has no meaningful fraction, so they reset the published value to nil. The play-button ring binds directly to that property.
+**Progress reporting.** FluidAudio exposes a `progressHandler: DownloadUtils.ProgressHandler?` on `AsrModels.downloadAndLoad(...)`. The handler streams `DownloadProgress { fractionCompleted, phase }` where `phase ∈ {.listing, .downloading(completedFiles, totalFiles), .compiling(modelName)}`. We publish `fractionCompleted` to `TranscriptionStatus.modelDownloadProgress` only during the `.downloading` phase — listing is sub-second and compiling has no meaningful fraction, so they reset the published value to nil. The play-button ring binds directly to that property.
 
 **Error humanisation.** Raw FluidAudio errors are NSError-bridged URL/POSIX errors; `String(describing: error)` dumps the entire userInfo blob (the offline case is a 1.2 KB wall of `NSURLErrorDomain` keys), which rendered as the Settings status row before Sprint 4.5. `humaniseModelLoadError(_:)` maps the common cases to short, action-oriented copy and falls back to `error.localizedDescription` for unknown errors. The raw error still goes to `os.Logger` via the diag channel for debugging — only the user-facing string is humanised.
 
-### Streaming vs Parakeet TDT v3
+### Parakeet TDT v3 (only engine — streaming was removed 2026-05-20)
 
-Two different FluidAudio engines, **not** simultaneously loaded. The `AsrMode` AppStorage choice swaps which one `TranscriptionService` instantiates:
+The app uses a single ASR engine: **Parakeet TDT v3** (`AsrManager` from FluidAudio). Live partials are produced every ~700 ms by `tdtLiveTranscribe()` re-transcribing the accumulated `tdtBuffers`. On stop, a final clean transcribe runs over the full buffer for punctuated, capitalised output.
 
-- **Streaming** (`StreamingEouAsrManager`): live partials at low latency, no punctuation/capitalisation.
-- **Parakeet TDT v3** (`AsrManager`): live partials AND a final clean transcribe on stop, punctuated + capitalised. Higher CPU.
+The previously-available `StreamingEouAsrManager` mode was removed in Phase J Tier 5. The dual-engine setup forced a 26-second CoreML cold-compile on first switch to TDT — `ensureModelLoaded` loaded streaming first (the default), and switching to TDT in Settings triggered `reloadModel` which unloaded streaming and downloaded+compiled TDT. The first compile on a fresh install pegged the audio actor while the user's first recording attempt was sitting there with unresponsive buttons. Removing the mode eliminates the failure window and simplifies the codebase by ~200 lines.
 
-Both run fully on-device on the ANE. The picker in Settings is the only user-facing knob.
+If we ever want streaming back, the surface area is documented in git history (search for "Phase J Tier 5"): a `case .streaming` branch in `loadModel`/`stopRecording`/`performRecording`, a `StreamingEouAsrManager` property, a `handlePartial(_:)` method, the `AsrMode` enum, and the Settings picker. Verify it handles AirPods' 24 kHz stereo VP-free before shipping any return.
 
 ### Scene-phase observer — only auto-stop on URL-scheme launches
 
@@ -585,7 +583,7 @@ Final transcript is built by three deterministic passes, in order:
 
 All three pipeline sites in `TranscriptionService` (final stop at ~line 472, TDT live at ~507, streaming partial at ~570) run filler → substitution in that order so substitutions don't get stripped.
 
-**FluidAudio biasing limitation.** `customHotwords` is implemented as a casing-rewrite, NOT real engine biasing. FluidAudio exposes `configureVocabularyBoosting` only on `SlidingWindowAsrManager`; the two managers we use (`StreamingEouAsrManager`, `AsrManager` for TDT) don't have it. To get real biasing for misrecognised words (not just casing) we'd need to swap an ASR manager — out of scope for v1. The Settings copy reflects this honestly: "Best for proper nouns Parakeet hears correctly but doesn't capitalise. For mis-transcribed words, use Substitutions instead."
+**FluidAudio biasing limitation.** `customHotwords` is implemented as a casing-rewrite, NOT real engine biasing. FluidAudio exposes `configureVocabularyBoosting` only on `SlidingWindowAsrManager`; the manager we use (`AsrManager` for TDT) doesn't have it. To get real biasing for misrecognised words (not just casing) we'd need to swap to `SlidingWindowAsrManager` — out of scope for v1. The Settings copy reflects this honestly: "Best for proper nouns Parakeet hears correctly but doesn't capitalise. For mis-transcribed words, use Substitutions instead."
 
 ### Recording phase state machine
 
