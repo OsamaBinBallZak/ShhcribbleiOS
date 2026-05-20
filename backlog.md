@@ -4,6 +4,34 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## Stashed 2026-05-20 PM — three changes that were built but not verifiably tested
+
+These were written in the afternoon session, never confirmed working, then reverted at Tiuri's request because the session had drifted into "build without verify" territory. Code lives in `git stash@{0}` ("Phase J Tier 6+ untested: bigger SwipeBackHint card, launchedFromKeyboard swipe-back-stop fix, ModelLoadingBanner."). Revisit individually when there's bandwidth + internet to test on device.
+
+### 1. Bigger SwipeBackHint card with iPhone icon + orange dot
+
+Upgrade of the existing simple grey rectangle into a card-style layout: 44pt circle on the left with iPhone icon, then a small orange dot + "Shhhcribble is recording" headline, with the swipe instruction as secondary text below. Also includes an optional "Install shortcut" CTA underneath (hidden until we ship the `.shortcut` file).
+
+Untested because the keyboard cold-start path needed the Full Access reset + re-enable, and the model wouldn't load (offline). Worth re-attempting on a stable testing setup.
+
+### 2. `launchedFromKeyboard` flag to suppress auto-stop on swipe-back
+
+The scene-phase observer in `ShhhcribbleApp` auto-stops a launched-via-URL recording when the app goes to background. This is correct for Back-Tap / Shortcut launches ("tap back-pill = commit") but wrong for keyboard cold-starts where the user is supposed to swipe back to the keyboard while recording continues — directly contradicting our own swipe-back hint banner.
+
+Fix sketch: add `launchedFromKeyboard: Bool` published on `TranscriptionStatus`. Set true in `handle(url:)`'s `case "keyboard"` / `"record-from-keyboard"`. Reset wherever `launchedViaURL` is reset. Scene-phase check becomes `phase == .background && status.isRecording && status.launchedViaURL && !status.launchedFromKeyboard`.
+
+Untested because we couldn't reach the recording state without internet. Logic is straightforward; verify by: cold-start from keyboard, swipe right to return to host app, speak, return to Shhhcribble, confirm recording was still going.
+
+### 3. `ModelLoadingBanner` in the recording overlay
+
+A spinner-banner shown when `status.model != .ready` while a recording is active. Tells the user audio is being captured while the model loads, so the empty live-transcript area doesn't look broken. Especially relevant for keyboard cold-starts where the user has no "model not ready" affordance to prevent the tap.
+
+Copy adapts to state: download percentage during the download phase, "Preparing transcription engine — first launch can take ~25 s" during compile.
+
+Untested because we were offline during the test attempt → the actual error case ("No internet connection. Parakeet TDT v3 needs a one-time download") rendered correctly in Settings → Status, but we never saw the loading banner mid-recording. Verify on a fresh install with internet.
+
+---
+
 ## Superwhisper-parity cold-start UX
 
 Tiuri sent reference screenshots 2026-05-20. Three distinct pieces of polish to consider:

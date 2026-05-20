@@ -34,6 +34,7 @@ struct SettingsView: View {
                     transcriptionStyleSection
                     keyboardSection
                     vocabularySection
+                    feedbackSection
                     performanceSection
                     permissionsSection
                     aboutSection
@@ -123,6 +124,23 @@ struct SettingsView: View {
             Spacer()
             Text(detail)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var feedbackSection: some View {
+        Section {
+            NavigationLink {
+                FeedbackListView()
+            } label: {
+                detailRow(
+                    title: "Feedback",
+                    detail: FeedbackStore.shared.count == 0 ? "None" : "\(FeedbackStore.shared.count)"
+                )
+            }
+        } header: {
+            Text("Feedback")
+        } footer: {
+            Text("Record voice feedback about Shhhcribble itself — bugs, missing features, UX papercuts. Stays on-device until you share it.")
         }
     }
 

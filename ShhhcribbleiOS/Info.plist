@@ -39,6 +39,8 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Shhhcribble records audio to transcribe your speech. Recording only happens when you trigger it.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -56,6 +58,8 @@
 		<string>processing</string>
 		<string>push-to-talk</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

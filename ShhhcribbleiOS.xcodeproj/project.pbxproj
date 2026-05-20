@@ -26,6 +26,7 @@
 		6031DE1E90E080A56490D210 /* CancelRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */; };
 		6375D73C63BE966EE67C623A /* String+Substitutions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78E2494F7C979E52B94887C1 /* String+Substitutions.swift */; };
 		67197467491D7E91CDD42A25 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */; };
+		72236AC0D4C1C07669C99068 /* FeedbackListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */; };
 		7485596D89D91B4F32AB7402 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D1BE8FC5BFF46DBFE2BC0EA8 /* FluidAudio */; };
 		7AF1187E2A02CBB988B10B40 /* ToggleRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46DB7DD6613AE5315B6E4A04 /* ToggleRecordingIntent.swift */; };
 		7F08B2964583055AF2F18C6A /* KeyboardKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE98113653B9CE4007AD261B /* KeyboardKit */; };
@@ -47,6 +48,7 @@
 		C680884E02E47E863C450850 /* ShhhcribbleWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07913D96A6F38303729C43F7 /* ShhhcribbleWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CA8574DCFEFEB1A394A670D6 /* ClipboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */; };
 		CAF1BF9ED9D4C2A49B90975A /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 687417872E4192504E8FED30 /* AudioRecorder.swift */; };
+		CCF28FCE05501CD87820BA8B /* FeedbackCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082AA39019D60D0BFEF3B1C /* FeedbackCaptureView.swift */; };
 		D2896EEE392BDFAC6D883C61 /* RecordControlWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */; };
 		D82DDEAA89E30B8359D041B9 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */; };
 		DE0F38109584DB8B63DE3D06 /* ShhhcribbleShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEFA5C1EC303F6764B041D06 /* ShhhcribbleShortcuts.swift */; };
@@ -54,6 +56,7 @@
 		E923735934BFE63510C7C276 /* CustomWordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A507110BACFF08E47FFE2EFC /* CustomWordsView.swift */; };
 		EF43D28C29F6BA8CBE6F8977 /* NoteDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */; };
 		EF9177A7A384C62B39C1EC48 /* ShhhcribbleActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F647A6F2EE2757605B66066F /* ShhhcribbleActivityAttributes.swift */; };
+		F050101E5CB6B7A962A70117 /* FeedbackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4552CFBF97C3965539D4603 /* FeedbackStore.swift */; };
 		F16617FBF0D0DBD61899D5D9 /* SubstitutionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3084FA0CA020E42C4A01DE8E /* SubstitutionsView.swift */; };
 		FC825DC4939F22412C816BCD /* String+TitleGeneration.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF1C9A70FCBEE2639F513380 /* String+TitleGeneration.swift */; };
 		FEB74658A02A655E41807690 /* StartRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6836E2B6F662F9DFBCBC4D3 /* StartRecordingIntent.swift */; };
@@ -139,6 +142,7 @@
 		4853708B504A76F209891E01 /* KeyboardBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardBridge.swift; sourceTree = "<group>"; };
 		4DC7CD9084CEFD0BC71D09EF /* String+Filters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+Filters.swift"; sourceTree = "<group>"; };
 		501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ShhhcribbleShared.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		5082AA39019D60D0BFEF3B1C /* FeedbackCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackCaptureView.swift; sourceTree = "<group>"; };
 		553D8890C795CDE235977EFD /* AudioInterruptionObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInterruptionObserver.swift; sourceTree = "<group>"; };
 		55FC191D0172714C04A3D24F /* KeyboardRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardRootView.swift; sourceTree = "<group>"; };
 		656869E266D1C8CCF0A5B31B /* NotesRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesRepository.swift; sourceTree = "<group>"; };
@@ -157,12 +161,14 @@
 		AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancelRecordingIntent.swift; sourceTree = "<group>"; };
 		BF932B842F1D3FF7670E760F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackListView.swift; sourceTree = "<group>"; };
 		D7EE9617C3C7A0932795E033 /* FillerWordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FillerWordsView.swift; sourceTree = "<group>"; };
 		D9B54907BD89721546007451 /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
 		DF1C9A70FCBEE2639F513380 /* String+TitleGeneration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "String+TitleGeneration.swift"; sourceTree = "<group>"; };
 		E4BF17FFB6570534E1109553 /* ShhhcribbleiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ShhhcribbleiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6836E2B6F662F9DFBCBC4D3 /* StartRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartRecordingIntent.swift; sourceTree = "<group>"; };
 		EEFA5C1EC303F6764B041D06 /* ShhhcribbleShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleShortcuts.swift; sourceTree = "<group>"; };
+		F4552CFBF97C3965539D4603 /* FeedbackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackStore.swift; sourceTree = "<group>"; };
 		F647A6F2EE2757605B66066F /* ShhhcribbleActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleActivityAttributes.swift; sourceTree = "<group>"; };
 		F6F03C07BF30107CC41CC0D9 /* ShhhcribbleWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleWidgetBundle.swift; sourceTree = "<group>"; };
 		F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
@@ -206,6 +212,16 @@
 				33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */,
 			);
 			path = NoteDetail;
+			sourceTree = "<group>";
+		};
+		2ABF01F5F851B6C1170B2B34 /* Feedback */ = {
+			isa = PBXGroup;
+			children = (
+				5082AA39019D60D0BFEF3B1C /* FeedbackCaptureView.swift */,
+				CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */,
+				F4552CFBF97C3965539D4603 /* FeedbackStore.swift */,
+			);
+			path = Feedback;
 			sourceTree = "<group>";
 		};
 		3AC1AE92F36A0DA1106BB82E /* App */ = {
@@ -265,6 +281,7 @@
 		88A72DA31A313C6B4FEC076C /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				2ABF01F5F851B6C1170B2B34 /* Feedback */,
 				209499DF14E202ACA80479F1 /* NoteDetail */,
 				FC64FA46EEB1D6DF21623F5B /* NotesList */,
 				A3160FABEF1CD7E3B7B71C52 /* Onboarding */,
@@ -586,6 +603,9 @@
 				CA8574DCFEFEB1A394A670D6 /* ClipboardService.swift in Sources */,
 				0642854955935156E76FEFEC /* ContentView.swift in Sources */,
 				E923735934BFE63510C7C276 /* CustomWordsView.swift in Sources */,
+				CCF28FCE05501CD87820BA8B /* FeedbackCaptureView.swift in Sources */,
+				72236AC0D4C1C07669C99068 /* FeedbackListView.swift in Sources */,
+				F050101E5CB6B7A962A70117 /* FeedbackStore.swift in Sources */,
 				9DDE601FC10439667FD0C59B /* FillerWordsView.swift in Sources */,
 				1BDCAA44C32853FE8EBA56E9 /* Note.swift in Sources */,
 				B2DC6A9E4BB42904174465C6 /* NoteDetailView.swift in Sources */,

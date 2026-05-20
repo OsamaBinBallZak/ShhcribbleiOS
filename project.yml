@@ -78,6 +78,12 @@ targets:
             CFBundleURLSchemes:
               - shhhcribble
         LSRequiresIPhoneOS: true
+        # Expose the app's Documents directory in Files.app under
+        # "On My iPhone" → Shhhcribble. Lets us browse + extract the
+        # Documents/Feedback/ folder without devicectl. Mirrors what
+        # Superwhisper ships.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         NSMicrophoneUsageDescription: "Shhhcribble records audio to transcribe your speech. Recording only happens when you trigger it."
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true

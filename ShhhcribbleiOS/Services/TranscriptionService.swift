@@ -312,6 +312,37 @@ actor TranscriptionService {
         vadManager = nil
     }
 
+    /// One-shot transcribe of an audio file. Loads the file with
+    /// AVAudioFile, hands the buffer to TDT, returns the transcript.
+    /// Used by the Feedback capture flow — it records via AVAudioRecorder
+    /// (independent of our main TDT live pipeline) and then transcribes
+    /// once on stop. Doesn't write a Note, doesn't touch `recording`
+    /// state — pure batch operation.
+    func transcribeOneShot(audioFileURL: URL) async throws -> String {
+        try await ensureModelLoaded()
+        guard let m = tdtManager else {
+            throw NSError(
+                domain: "Shhhcribble.TranscribeOneShot",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Transcription engine not loaded"]
+            )
+        }
+        let file = try AVAudioFile(forReading: audioFileURL)
+        let format = file.processingFormat
+        let frameCount = AVAudioFrameCount(file.length)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            throw NSError(
+                domain: "Shhhcribble.TranscribeOneShot",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Couldn't allocate audio buffer"]
+            )
+        }
+        try file.read(into: buffer)
+        var decoderState = TdtDecoderState.make()
+        let result = try await m.transcribe(buffer, decoderState: &decoderState)
+        return result.text
+    }
+
     func reloadModel() async {
         guard !recording else {
             await TranscriptionStatus.shared.event("Can't reload while recording")

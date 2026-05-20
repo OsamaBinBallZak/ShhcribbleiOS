@@ -7,6 +7,10 @@ import SwiftUI
 final class NoteFocus: ObservableObject {
     static let shared = NoteFocus()
     @Published var activeNoteId: UUID?
+    /// True when a sub-view (e.g. Feedback list) wants to hide the
+    /// global play FAB so its own record button is the only one on
+    /// screen. Set in `.onAppear`, cleared in `.onDisappear`.
+    @Published var hideGlobalPlayFAB: Bool = false
     private init() {}
 }
 
@@ -30,7 +34,7 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 TabPill(tab: $tab)
                 Spacer()
-                if !status.isRecording {
+                if !status.isRecording && !noteFocus.hideGlobalPlayFAB {
                     HStack(spacing: 10) {
                         if let id = noteFocus.activeNoteId {
                             ContinueRecordingButton(
@@ -49,6 +53,9 @@ struct ContentView: View {
                                value: noteFocus.activeNoteId)
                 }
             }
+            .animation(.easeInOut(duration: 0.2), value: noteFocus.hideGlobalPlayFAB)
+            // ↑ smooth-fade the entire trailing FAB group when sub-views
+            // (like FeedbackListView) request the global FAB hidden.
             .padding(.horizontal, 18)
             .padding(.bottom, 8)
             .zIndex(2) // keep the tab bar + play button above any underlying scroll views
