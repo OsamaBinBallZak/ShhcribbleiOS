@@ -31,6 +31,14 @@ final class KeyboardViewController: KeyboardInputViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         KeyboardBridge.debug("KeyboardViewController.viewDidLoad — KeyboardKit build")
+        // NOTE: do NOT touch `state.keyboardContext` here.
+        // KeyboardInputViewController's `state` is initialised via
+        // `DispatchQueue.main.async(performInitialSetup)` inside the
+        // parent's `viewDidLoad`. Accessing `state.keyboardContext`
+        // synchronously crashes the extension silently (iOS respawns
+        // it, so no crash report shows up — diagnostic logs simply
+        // never appear). Move per-session config into
+        // `viewWillSetupKeyboardView` (post-async-setup) instead.
     }
 
     /// KeyboardKit calls this from `viewWillAppear`. Override here (NOT
@@ -38,6 +46,26 @@ final class KeyboardViewController: KeyboardInputViewController {
     /// implementation would otherwise re-call `setupKeyboardView` with a
     /// plain KeyboardView and clobber our toolbar wrapper.
     override func viewWillSetupKeyboardView() {
+        // FB-1: defensive reset of KeyboardKit case/autocap config on
+        // every keyboard appearance. Root cause Tiuri hit was the
+        // `@AppStorage(.. store: .keyboardSettings)`-backed
+        // `isAutocapitalizationEnabled` getting persisted as `false`
+        // somehow — either iOS extension state corruption, or an
+        // earlier build flipped it. When false, KeyboardKit's
+        // `KeyboardContext.init` calls `syncAutocapitalizationWithSetting`
+        // which sets `autocapitalizationTypeOverride = .none`, hard-
+        // disabling all case changes (keys stuck lowercase, shift taps
+        // no-op, no sentence-start auto-shift). Forcing it true on
+        // every setup self-heals from any persisted bad state.
+        //
+        // Free-tier KeyboardKit has no user-facing toggle for this
+        // setting, so there's no preference to respect — we always
+        // want autocap on. References: KeyboardKit issues #932, #996.
+        let context = state.keyboardContext
+        context.keyboardCase = .auto
+        context.autocapitalizationTypeOverride = nil
+        context.settings.isAutocapitalizationEnabled = true
+
         setupKeyboardView { [weak self] controller in
             guard let self else { return AnyView(EmptyView()) }
             return AnyView(

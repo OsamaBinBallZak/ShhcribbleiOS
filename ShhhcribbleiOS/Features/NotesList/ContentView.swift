@@ -170,7 +170,11 @@ private struct StartRecordingButton: View {
 
     var body: some View {
         Button(action: start) {
-            Image(systemName: "play.fill")
+            // Harry's first-round feedback (backlog FB-3): a "play"
+            // triangle reads as "play something that exists" — confusing
+            // for a recording action. Mic icon is the unambiguous "start
+            // dictating" affordance every voice app uses.
+            Image(systemName: "mic.fill")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
