@@ -28,8 +28,7 @@ ShhhcribbleiOS/
 │   └── AppIntents.swift              # StartRecordingIntent, ShhhcribbleShortcuts (App Shortcuts)
 ├── Features/
 │   ├── Recording/
-│   │   ├── RecordingView.swift       # Waveform, timer, Stop + Cancel buttons
-│   │   └── RecordingViewModel.swift  # @Observable, owns TranscriptionService session
+│   │   └── RecordingView.swift       # Waveform, timer, Stop + Cancel buttons
 │   ├── NotesList/
 │   │   ├── NotesListView.swift       # Search bar, tag filter chips, note rows
 │   │   └── NotesListViewModel.swift
@@ -45,11 +44,14 @@ ShhhcribbleiOS/
 │       └── OnboardingView.swift      # 3 screens: what it is / add Control Center / AirPods setup
 ├── Models/
 │   └── Note.swift                    # @Model SwiftData entity — see schema below
-├── Services/
-│   ├── TranscriptionService.swift    # FluidAudio actor — FRAGILE, read rules below
-│   ├── AudioSessionService.swift     # AVAudioSession + route-change handling — FRAGILE
-│   ├── VocabularyService.swift       # Hotwords + substitution rules, AppStorage-backed
-│   └── ClipboardService.swift        # UIPasteboard snapshot/write/restore
+├── Services/                          # Sprint 6 architecture: three deep modules
+│   ├── RecordingCoordinator.swift    # Actor — recording lifecycle + phase machine + side-effects
+│   ├── TextEngine.swift              # Actor — model + VAD + buffers + vocabulary + transcribeOneShot
+│   ├── AudioInput.swift              # Mic + warm-engine + AirPods route handling + interruption observer
+│   ├── TranscriptionStatus.swift     # @MainActor @Observable — shared UI view-model
+│   ├── NotesRepository.swift         # SwiftData seam (insert/append/title/etc.)
+│   ├── ShhhcribbleActivityManager.swift # Live Activity start/end/update
+│   └── ClipboardService.swift        # UIPasteboard snapshot/restore (keyboard autopaste only)
 ├── Extensions/
 │   ├── String+Filters.swift          # Filler word removal, substitution pass
 │   └── String+TitleGeneration.swift  # First-sentence extraction for auto-title
@@ -145,32 +147,94 @@ Route-change handlers manage the active input automatically. A manual device pic
 
 ---
 
-## AudioSessionService — AirPods rules (empirically verified on Mac 2026-04-23)
+## AudioInput — AirPods rules (empirically verified on Mac 2026-04-23, preserved through Sprint 6)
 
-These are the most dangerous area of the codebase. The Mac version hit every one of these. Don't repeat them.
+These are the most dangerous area of the codebase. The Mac version hit every one of these. Don't repeat them. Lives in `AudioInput.swift` since Sprint 6.
 
 **Never call `setVoiceProcessingEnabled(true)` for Bluetooth.**
 On iOS 17+ and macOS 14+, AirPods deliver clean audio via plain HAL I/O. Voice processing destroys output audio (music goes scratchy), forces HFP lock-in for 30+ seconds post-recording, and generates `AVAudioEngineConfigurationChange` notification storms. The guidance that AirPods need VP to deliver mic audio is iOS 16-era and is wrong today.
 
-**Fresh `AVAudioEngine` per recording.**
-Deallocate and recreate `engine = AVAudioEngine()` in `stop()`. This ensures the engine always binds to the current input device. AirPods reconnects, Continuity Mic swaps, sleep/wake all self-heal on the next trigger. Cost: ~100–200 ms cold-start. Worth every millisecond.
+**Single warm engine across recordings.**
+Since Sprint 5's warm-mode design, `AudioInput` owns one long-lived `AVAudioEngine` playing silence to keep iOS happy. Per-recording teardown installs/removes a tap on that engine — not the original "fresh engine per recording" pattern. The engine is rebuilt on `AVAudioEngineConfigurationChange` (route changes self-heal). Cost: orange mic indicator stays on while warm mode is active. SuperWhisper makes the same trade-off.
 
-**Mid-recording route changes: rebuild, don't patch.**
-Observe `AVAudioEngineConfigurationChange`. Tear down the tap. Reallocate the engine. Restart against the new format. Preserve any samples already captured.
+**Mid-recording route changes: rebuild with 200ms debounce.**
+`AudioInput.handleRouteChange` schedules teardown+restart 200ms after the notification. Without the delay, `engine.start()` can raise `IsFormatSampleRateAndChannelCountValid(format)` (NSException, uncatchable) because the input/output format is transiently invalid right after a route change. The original split-across-AudioRecorder design had the same 200ms delay; Sprint 6 preserved it in the unified handler. Also: `startWarmEngine` early-bails if the format is still invalid — next route-change notification will retry.
 
 **Buffer allocation per-callback, not pre-sized.**
-AirPods use variable-size stereo buffers. Pre-sizing from the input format at prepare-time silently truncates → trailing words are clipped from transcription. Allocate `AVAudioPCMBuffer` per-callback from `buffer.frameLength * ratio`.
+AirPods use variable-size stereo buffers. Pre-sizing from the input format at prepare-time silently truncates → trailing words are clipped from transcription. Allocate `AVAudioPCMBuffer` per-callback from `buffer.frameLength * ratio`. `AudioInput.handleBuffer` does this.
 
 **Never run two `AVAudioEngine` instances simultaneously.**
 Sharing the VP lifecycle deadlocks the main thread on `AVAudioEngineConfigurationChange`. This broke the Mac v2 onboarding mic-test screen. If you're thinking of a mic preview in onboarding — don't.
 
+**Defensive engine-restart in `AudioInput.start`.**
+On the keyboard cold-start path, the warm engine can transiently quiesce between `enterWarmMode` and the recording's `installSharedTap` call (~milliseconds — observed during Sprint 6 verification). `AudioInput.start` defensively checks `engine.isRunning` and restarts before installing the tap. Without this, the keyboard's first-tap-after-cold-launch surfaces "Recording failed to start".
+
 ---
 
-## TranscriptionService
+## Sprint 6 module split (TranscriptionService → three deep modules)
 
-Swift `actor` — thread-safe audio buffer access. One `AsrManager` loaded with Parakeet TDT v3 (~494 MB, downloaded once). Final transcription runs on `stop()`. Live preview (if implemented) polls the growing sample buffer every 3 s — do not use a pre-sized reusable buffer (see AudioSessionService buffer rule above).
+`TranscriptionService` (the 1134-LOC god actor) was split in Sprint 6 into three coherent modules behind narrow interfaces. Don't relitigate. If you find yourself wanting to add cross-module knowledge ("AudioInput knows about TextEngine state" / "TextEngine knows about clipboard"), redesign or push back — the seams are deliberate.
 
-The streaming `StreamingEouAsrManager` (160 ms chunks) exists in FluidAudio but we don't use it — see the "Parakeet TDT v3 (only engine)" section below for the removal rationale.
+### `TextEngine` (actor)
+
+The pure transcription pipeline. Owns `AsrManager` (Parakeet TDT v3, ~494 MB), `VadManager` (Silero VAD), the accumulated `tdtBuffers`, the rotated `committedChunks`, and the vocabulary pipeline (filler + substitution, fused into one `applyVocabulary` helper).
+
+Public surface:
+- `ensureLoaded() async throws` — idempotent model load
+- `reload() async` — force re-download/recompile
+- `reset() async` — start of a recording session
+- `feed(_ buffer: AVAudioPCMBuffer) async` — append + run VAD inline + maybe rotate
+- `liveSnapshot() async -> String` — current best-effort full filtered transcript (committed chunks + live re-transcribe)
+- `finalize() async -> String` — stop path; stitch committed + final, apply vocabulary, return
+- `discard()` — cancel path; drop everything
+- `transcribeOneShot(audioFileURL:) async throws -> String` — batch transcribe for the Feedback feature, no session state touched
+
+VAD lives here (not in AudioInput) because chunk rotation is a transcription concern — it bounds TDT memory by stitching `committedChunks`. Keeping VAD with the engine makes the AudioInput↔TextEngine interface exactly one line: `engine.feed(buffer)`.
+
+### `AudioInput` (final class)
+
+The unified audio-capture module. Owns the global `AVAudioSession`, the warm `AVAudioEngine` (silent player + input node), the route-change observer, the interruption observer, the per-recording tap, the audio-level RMS computation, the staleness watchdog, and the warm-mode idle-expiry scheduler. Replaces three previous files (AudioSessionManager + AudioRecorder + AudioInterruptionObserver, 609 LOC).
+
+Public surface:
+- `configure()` — set session category (once at app launch)
+- `startObservingInterruptions()` — interruption observer registration (once at app launch)
+- `enterWarmMode() / exitWarmMode()` + `warmModeActive: Bool`
+- `scheduleIdleExpiry() / cancelIdleExpiry()` — warm-mode auto-exit
+- `start(onLevel:) throws -> AsyncStream<AVAudioPCMBuffer>` — recording start, returns buffer stream
+- `stop()` — graceful stop (drain in-flight buffers, finish stream)
+- `cancel()` — immediate teardown (abandon in-flight, finish stream)
+
+It's a `final class @unchecked Sendable`, not an actor, because the tap callback runs on a real-time audio thread and forcing it through an actor's serial executor would add hop overhead at 10–20 Hz.
+
+### `RecordingCoordinator` (actor)
+
+Recording lifecycle, phase state machine, and downstream side-effects (SwiftData via `NotesRepository`, clipboard, App Group hand-off to the keyboard, Live Activity, background-task plumbing, append-to-note routing, URL-launch flags).
+
+Recording body is a direct `for await buffer in stream` loop:
+
+```swift
+let stream = try AudioInput.shared.start(onLevel: ...)
+await TextEngine.shared.reset()
+for await buffer in stream {
+    await TextEngine.shared.feed(buffer)
+    await maybeKickLiveSnapshot()
+}
+// Stream finished. Caller called AudioInput.stop() or .cancel().
+if cancelled {
+    await TextEngine.shared.discard()
+} else {
+    let transcript = await TextEngine.shared.finalize()
+    await commit(transcript, ...)
+}
+```
+
+Cancel-vs-Stop semantics are now two named code paths (not a `cancelled` flag checked in `defer`). The continuation handshake (`finishContinuation`, `CheckedContinuation`) is gone. Live-partial timer (re-transcribe every ~700ms) lives here as a separate `Task.detached` that polls `TextEngine.liveSnapshot()` and publishes to `TranscriptionStatus.partialSnippet`.
+
+### `TranscriptionStatus` (@MainActor @Observable)
+
+The app-wide SwiftUI view-model for recording state. Kitchen-sink by design — splitting it would ripple through every view file for no locality win. Both `TextEngine` and `RecordingCoordinator` write to `.shared`.
+
+`setPhase(_:)` validates the transition against `RecordingPhase.canTransition(to:)` and logs on illegal transitions but always applies the new phase (UI never gets stuck).
 
 ---
 
@@ -376,6 +440,14 @@ J6. ✅ VAD-based chunked transcription. Loads `FluidAudio.VadManager` alongside
 J7. ✅ Polish pass — AirPods staleness banner (`2bcc823`), keyboard-cold-start swipe-back hint (`fab173d`), onboarding refresh + CLAUDE.md docs (`466f20c`).
 J8. ✅ In-app feedback feature — Settings → Feedback. Voice + optional pasted screenshot + optional note, stored as `Documents/Feedback/<uuid>/{metadata.json, screenshot.png}`. Multi-select + bulk email to `tiurihartog@icloud.com` with a `.zip` attachment of the raw folders, plus a post-send "delete from device?" prompt. See "Feedback feature" section below. Commit `79ba291` + uncommitted polish (toolbar split, append-on-tap, bulk email).
 
+**Sprint 6 — Architectural deepening of TranscriptionService** — ✅ shipped 2026-05-21
+
+S1. ✅ Extract `TextEngine` — model + VAD + buffers + vocabulary + transcribeOneShot behind `feed/liveSnapshot/finalize/discard/transcribeOneShot/ensureLoaded/reload`. Fuses three duplicated filler+substitution call sites into one `applyVocabulary` helper (architecture candidate #5). Commit `011d92c`.
+
+S2. ✅ Consolidate audio capture into `AudioInput` — merges `AudioRecorder` + `AudioSessionManager` + `AudioInterruptionObserver` (609 LOC across 3 files) into one module behind `configure/startObservingInterruptions/enterWarmMode/exitWarmMode/scheduleIdleExpiry/cancelIdleExpiry/start/stop/cancel`. `RecordingCoordinator` becomes a direct `for await buffer in stream` consumer (no `CheckedContinuation` handshake; Cancel-vs-Stop are two named code paths instead of a `cancelled` flag checked in `defer`). Two in-commit fixes: 200ms debounce on `AVAudioEngineConfigurationChange` to avoid `IsFormatSampleRateAndChannelCountValid` crash; defensive engine-restart in `AudioInput.start` to handle warm-engine transient quiesce on the keyboard cold-start path. Commit `dc0ed03`.
+
+S3. ✅ Promote remainder to `RecordingCoordinator` — rename `TranscriptionService` → `RecordingCoordinator`; extract `TranscriptionStatus` to its own file; formalise the phase machine via `RecordingPhase.canTransition(to:)` validated in `setPhase`. Commit `1beee3f`.
+
 ---
 
 ## Feedback feature (Sprint 5 / Phase J8)
@@ -383,9 +455,9 @@ J8. ✅ In-app feedback feature — Settings → Feedback. Voice + optional past
 In-app voice feedback capture for dogfooding, completely separate from the user-facing `Note` flow. Lives in `ShhhcribbleiOS/Features/Feedback/`:
 
 - **`FeedbackStore.swift`** — file-based store rooted at `Documents/Feedback/`. Each item is a folder `<uuid>/` containing `metadata.json` (`{ createdAt, transcript, note, hasScreenshot, durationSeconds }`) and optionally `screenshot.png`. `@MainActor @Published items: [FeedbackItem]` for SwiftUI binding. Deliberately file-based, not SwiftData — these items are short-lived (collect → review → delete), no schema evolution likely, and file-based means `devicectl device copy from` and Files.app browsing both work transparently.
-- **`FeedbackCaptureView.swift`** — modal capture UI. Records via raw `AVAudioRecorder` (16 kHz PCM WAV, the format TDT likes natively), then calls `TranscriptionService.transcribeOneShot(audioFileURL:)` to get the text. Whole row is tappable (not just the mic icon). Subsequent recordings APPEND to the existing transcript (don't overwrite — Tiuri's 2026-05-20 feedback). Optional clipboard-screenshot paste + free-form note. Save writes the folder + commits to the store; temp WAV is discarded (we keep only the text + the screenshot).
+- **`FeedbackCaptureView.swift`** — modal capture UI. Records via raw `AVAudioRecorder` (16 kHz PCM WAV, the format TDT likes natively), then calls `TextEngine.shared.transcribeOneShot(audioFileURL:)` to get the text (Sprint 6 — was `TranscriptionService` before the split). Whole row is tappable (not just the mic icon). Subsequent recordings APPEND to the existing transcript (don't overwrite — Tiuri's 2026-05-20 feedback). Optional clipboard-screenshot paste + free-form note. Save writes the folder + commits to the store; temp WAV is discarded (we keep only the text + the screenshot).
 - **`FeedbackListView.swift`** — list of items, sorted newest first. Toolbar: "Select" (top-left, enters multi-select mode) + paperplane icon (send-all via `MFMailComposeViewController`, recipient hardcoded to `tiurihartog@icloud.com`) + "+" record-new (top-right). Tapping a row opens `FeedbackDetailView` for review + "Send to Tiuri" + delete-after-send.
-- **`TranscriptionService.transcribeOneShot(audioFileURL:)`** — one-shot batch transcribe added to the actor. Loads the file with `AVAudioFile`, hands the buffer to TDT, returns text. Doesn't touch `recording` state — pure batch operation. Independent of the main TDT live pipeline.
+- **`TextEngine.transcribeOneShot(audioFileURL:)`** — one-shot batch transcribe. Loads the file with `AVAudioFile`, hands the buffer to TDT, returns raw text (no vocabulary pass — feedback transcripts are kept verbatim). Doesn't touch session state — pure batch operation. Independent of the main TDT live pipeline.
 
 **Access for review later** — three paths:
 
@@ -404,7 +476,7 @@ In-app voice feedback capture for dogfooding, completely separate from the user-
 
 The original directory map showed a `XxxViewModel.swift` per feature. That pattern came from UIKit/early-SwiftUI and is no longer how Apple itself builds SwiftUI apps. The actual pattern in this codebase is:
 
-- **Domain logic in services / actors** — `TranscriptionService`, `AudioRecorder`, `ClipboardService`, `AudioSessionManager`, `NotesRepository`. These are the units worth unit-testing.
+- **Domain logic in services / actors** — `RecordingCoordinator`, `TextEngine`, `AudioInput`, `ClipboardService`, `NotesRepository` (post-Sprint-6 split). These are the units worth unit-testing.
 - **Shared observable state in `@Observable` model objects** — `TranscriptionStatus` is the canonical example. It's effectively the app-wide VM for recording state.
 - **View-local state in `@State`** — timer, search text, selected tags, focus, animation history. Don't lift these into a VM.
 - **A separate `XxxViewModel.swift` is added only when**: (a) the view has non-trivial local logic worth testing in isolation, or (b) the same logic is shared across multiple views. Default is no VM.
@@ -519,7 +591,7 @@ Don't push high-frequency state updates to a Live Activity to drive animations. 
 
 The Mac version computed a 60-character tail for the floating pill (`String(text.suffix(60))`). This was copied into iOS without realising the iOS overlay is full-screen and wants the **full** transcript. The sliding 60-char window broke the in-app `TypingViewModel` because `newText.hasPrefix(displayed)` failed on every partial — the typer rewound and retyped continuously. Symptom: jittery, never-settling text.
 
-Fix in [TranscriptionService.swift](ShhhcribbleiOS/Services/TranscriptionService.swift):
+Fix in [RecordingCoordinator.swift](ShhhcribbleiOS/Services/RecordingCoordinator.swift) (was `TranscriptionService.swift` pre-Sprint-6):
 - `TranscriptionStatus.partialSnippet` now receives the **full** filtered transcript.
 - Live Activity gets a bounded `String(text.suffix(200))` because widget render space is tight.
 
@@ -527,7 +599,7 @@ The `TypingViewModel`'s rewind logic is still correct for genuine ASR revisions;
 
 ### Audio reactivity
 
-[AudioRecorder.swift](ShhhcribbleiOS/Services/AudioRecorder.swift) computes RMS per buffer (~20 Hz on iPhone), scales by 12× to map normal speech to ~1.0, and runs an envelope follower (`max(scaled, smoothed * 0.78)`) for instant attack + smooth release. Published to `TranscriptionStatus.audioLevel` (0…1) which the in-app `SoundwaveBars` reads.
+[AudioInput.swift](ShhhcribbleiOS/Services/AudioInput.swift) computes RMS per buffer (~20 Hz on iPhone) (was `AudioRecorder.swift` pre-Sprint-6), scales by 12× to map normal speech to ~1.0, and runs an envelope follower (`max(scaled, smoothed * 0.78)`) for instant attack + smooth release. Published to `TranscriptionStatus.audioLevel` (0…1) which the in-app `SoundwaveBars` reads.
 
 `SoundwaveBars` keeps an 11-slot history and shifts left on a 60 ms tick — so the bars literally show the shape of your voice over the last ~660 ms, not a stylised pulse.
 
@@ -535,7 +607,7 @@ The Live Activity waveform stays self-driven (sin wave via TimelineView) — pus
 
 ### Model load — when, progress, errors
 
-**When the download fires.** [ShhhcribbleApp.init()](ShhhcribbleiOS/App/ShhhcribbleApp.swift) kicks off `Task.detached(priority: .userInitiated) { try? await TranscriptionService.shared.ensureModelLoaded() }` immediately at process start — in parallel with onboarding, before the user taps anything. By the time someone gets through 3 onboarding screens the streaming model (smaller) is usually cached; TDT v3 (~494 MB) takes longer but still front-loads against onboarding rather than the play button. `recordAndTranscribe` also `async let modelReady = ensureModelLoaded()` as a defensive second trigger, so a recording started before the load finishes still resolves correctly.
+**When the download fires.** [ShhhcribbleApp.init()](ShhhcribbleiOS/App/ShhhcribbleApp.swift) kicks off `Task.detached(priority: .userInitiated) { try? await RecordingCoordinator.shared.ensureModelLoaded() }` immediately at process start (which delegates to `TextEngine.ensureLoaded` since Sprint 6) — in parallel with onboarding, before the user taps anything. By the time someone gets through 3 onboarding screens the streaming model (smaller) is usually cached; TDT v3 (~494 MB) takes longer but still front-loads against onboarding rather than the play button. `recordAndTranscribe` also `async let modelReady = ensureModelLoaded()` as a defensive second trigger, so a recording started before the load finishes still resolves correctly.
 
 **Progress reporting.** FluidAudio exposes a `progressHandler: DownloadUtils.ProgressHandler?` on `AsrModels.downloadAndLoad(...)`. The handler streams `DownloadProgress { fractionCompleted, phase }` where `phase ∈ {.listing, .downloading(completedFiles, totalFiles), .compiling(modelName)}`. We publish `fractionCompleted` to `TranscriptionStatus.modelDownloadProgress` only during the `.downloading` phase — listing is sub-second and compiling has no meaningful fraction, so they reset the published value to nil. The play-button ring binds directly to that property.
 
@@ -555,7 +627,7 @@ If we ever want streaming back, the surface area is documented in git history (s
 
 ```swift
 if phase == .background && status.isRecording && status.launchedViaURL {
-    Task { await TranscriptionService.shared.stopRecording() }
+    Task { await RecordingCoordinator.shared.stopRecording() }
 }
 ```
 
@@ -579,21 +651,17 @@ The pattern: `perform()` calls `await Self.performer?()`, but the performer body
 
 The performer also flips `TranscriptionStatus.shared.phase = .recording` synchronously on `MainActor` before dispatching, so the overlay covers the launch flash before the actor hop.
 
-### AudioInterruptionObserver — Siri handoff grace window
+### AudioInput internals — Siri handoff, session activation retry, per-callback buffer copy
 
-Siri's audio session is briefly active when our intent fires, and a transient `.began` interruption can arrive right after our session activates as the contexts swap. Without filtering, that killed Siri-launched recordings after ~1 s.
+These three notes used to be three separate sections about three separate files. Sprint 6 merged them all into `AudioInput.swift`; the rules still hold, just consolidated:
 
-[AudioInterruptionObserver.swift](ShhhcribbleiOS/Services/AudioInterruptionObserver.swift) records `recordingStartedAt` (set/cleared from `TranscriptionService.recordAndTranscribe` and `stopRecording`/`cancelRecording`) and ignores `.began` interruptions that arrive within 1.5 s of that timestamp. Real interruptions (phone calls, alarms) always arrive well outside that window.
+**Siri handoff grace window.** Siri's audio session is briefly active when our intent fires, and a transient `.began` interruption arrives right after our session activates as the contexts swap. Without filtering, that killed Siri-launched recordings after ~1 s. `AudioInput.start` arms `interruptionGraceStart = Date()`; the interruption handler ignores `.began` events arriving within 1.5 s. Real interruptions (phone calls, alarms) always arrive well outside that window.
 
-### AudioSessionManager — release prior owner before claiming
+**Release prior owner before claiming.** `AudioInput.configure` calls `setActive(false, .notifyOthersOnDeactivation)` before `setCategory`, and `activateRetrying` retries once after 300 ms if the first `setActive(true)` throws. Defensive cover for the Siri-launched path: Siri's session can still be active during its dismissal animation, and a single un-retried activate sometimes fails silently — the engine starts but captures no audio.
 
-[AudioSessionManager.configure()](ShhhcribbleiOS/Services/AudioSessionManager.swift) calls `setActive(false, .notifyOthersOnDeactivation)` before `setCategory`, and `activate()` retries once after 300 ms if the first `setActive(true)` throws. This is defensive cover for the Siri-launched path: Siri's session can still be active during its dismissal animation, and a single un-retried activate sometimes fails silently — the engine starts but captures no audio.
+**Per-callback buffer copy.** `AudioInput.handleBuffer` allocates a **fresh** `AVAudioPCMBuffer` sized to `buffer.frameLength` and `memcpy`s frames in before yielding to the AsyncStream. Hardcoded buffer sizes (the original `2560`) silently truncate trailing audio on AirPods because the tap reuses backing storage and Bluetooth delivers variable-size stereo buffers — pre-sized taps clip the last frames of an utterance. Tap is installed with `bufferSize: 0` (let `AVAudioEngine` pick natural delivery size).
 
-### AudioRecorder — per-callback buffer copy + route-change rebuild
-
-`AudioRecorder.installTap` uses `bufferSize: 0` (let `AVAudioEngine` pick the natural delivery size — variable on AirPods). The tap closure allocates a **fresh** `AVAudioPCMBuffer` sized to `buffer.frameLength` and `memcpy`s frames in before yielding via `onBuffer`. Hardcoded buffer sizes (the original `2560`) silently truncate trailing audio on AirPods because the tap reuses backing storage and Bluetooth delivers variable-size stereo buffers — pre-sized taps clip the last frames of an utterance.
-
-The `engine` property is a `var`, not a `let`: an `AVAudioEngineConfigurationChange` notification observer rebuilds it from scratch on route change (AirPods disconnect, Continuity Mic swap). Per CLAUDE.md AirPods rules, "rebuild, don't patch" — surgically updating the existing engine deadlocks. Already-captured samples are preserved naturally because TDT accumulates in `tdtBuffers` and streaming has already fed buffers to the FluidAudio manager. Logs surface under `os.Logger(subsystem: "com.shhhcribble.diag", category: "audio")`.
+**Route-change rebuild — see the "AudioInput — AirPods rules" section above.**
 
 ### ClipboardService is keyboard-extension only
 
@@ -603,11 +671,11 @@ Two reasons not to revert this:
 1. The user explicitly didn't want the prior clipboard restored after a normal recording.
 2. Routing live-partial writes through the actor added enough latency that backgrounded paste targets only ever saw early words. Direct main-thread writes match the original behaviour.
 
-Snapshot / `scheduleRestore` / `restoreImmediately` are reserved for the Sprint 5 keyboard-extension autopaste path, where the keyboard injects via `UITextDocumentProxy.insertText` and then needs to put the user's prior clipboard back. Don't re-introduce those calls inside `TranscriptionService`.
+Snapshot / `scheduleRestore` / `restoreImmediately` are reserved for the Sprint 5 keyboard-extension autopaste path, where the keyboard injects via `UITextDocumentProxy.insertText` and then needs to put the user's prior clipboard back. Don't re-introduce those calls inside `RecordingCoordinator`.
 
 ### Cancel is a real abort
 
-`TranscriptionService.cancelRecording()` is distinct from `stopRecording()`. Cancel:
+`RecordingCoordinator.cancelRecording()` is distinct from `stopRecording()`. Cancel:
 - sets the `cancelled` flag, stops the recorder + cancels feed/live tasks
 - drops `tdtBuffers`, clears `lastPartial`
 - resumes the awaiter with empty text
@@ -621,7 +689,7 @@ Final transcript is built by three deterministic passes, in order:
 1. **Filler-word filter** — built-in regexes in [String+Filters.swift](ShhhcribbleiOS/Extensions/String+Filters.swift) plus user-added `customFillerWords` (whole-word, case-insensitive). Gated by the `filterFillerWords` toggle.
 2. **Substitution pass** — [String+Substitutions.swift](ShhhcribbleiOS/Extensions/String+Substitutions.swift) reads `substitutionRules` (Data, JSON-encoded `[String: String]`) AND synthesises one rule per `customHotwords` entry as `H.lowercased() → H`. Explicit substitutions win on key collision. Whole-word, case-insensitive.
 
-All three pipeline sites in `TranscriptionService` (final stop at ~line 472, TDT live at ~507, streaming partial at ~570) run filler → substitution in that order so substitutions don't get stripped.
+Since Sprint 6, the three pipeline sites collapsed into one private `applyVocabulary` helper inside `TextEngine` — called from `liveSnapshot()`, `finalize()`, and the rotation path. Ordering is filter → substitution, enforced in one place so future code can't accidentally violate it.
 
 **FluidAudio biasing limitation.** `customHotwords` is implemented as a casing-rewrite, NOT real engine biasing. FluidAudio exposes `configureVocabularyBoosting` only on `SlidingWindowAsrManager`; the manager we use (`AsrManager` for TDT) doesn't have it. To get real biasing for misrecognised words (not just casing) we'd need to swap to `SlidingWindowAsrManager` — out of scope for v1. The Settings copy reflects this honestly: "Best for proper nouns Parakeet hears correctly but doesn't capitalise. For mis-transcribed words, use Substitutions instead."
 
@@ -643,7 +711,7 @@ Empty transcript ("no speech detected") is **not** a phase. It's surfaced via `T
 
 Logged at the end of Sprint 4 — none of these block TestFlight, but flagging so they're not re-discovered.
 
-- **Retry button has no progress feedback.** In the model-load-failed error card, tapping Retry runs `TranscriptionService.shared.reloadModel()` (3–5 s on a cold load) before dismissing the overlay. During that wait the button stays tappable and there's no spinner — user has no signal that anything is happening. ~10 lines: add an `@State var reloading = false` to `ErrorCard`, swap the label for a `ProgressView` while reloading, disable the button. Low priority because model-load failure is rare on a healthy device.
+- **Retry button has no progress feedback.** In the model-load-failed error card, tapping Retry runs `RecordingCoordinator.shared.reloadModel()` (3–5 s on a cold load) before dismissing the overlay. During that wait the button stays tappable and there's no spinner — user has no signal that anything is happening. ~10 lines: add an `@State var reloading = false` to `ErrorCard`, swap the label for a `ProgressView` while reloading, disable the button. Low priority because model-load failure is rare on a healthy device.
 - **`SubstitutionPass.currentRules()` rebuilds the dict per call.** [String+Substitutions.swift](ShhhcribbleiOS/Extensions/String+Substitutions.swift) reads `UserDefaults` and JSON-decodes `substitutionRules` every time it's called. During streaming partials that's ~3–5 invocations/sec. Imperceptible at current dict sizes (single-digit entries) but the cleaner shape is a cached snapshot invalidated on AppStorage change. Defer until profiling shows it.
 - **Custom Words footer copy** — "Auto-corrects the casing of these words in transcripts. Best for proper nouns and brand names that Parakeet hears correctly but doesn't capitalise. For mis-transcribed words, use Substitutions instead." Pending a real on-device read; tighten if it reads off.
 - **TDT hallucinates phantom words on silence.** In Parakeet TDT v3 mode, recording near-silence produces a phantom transcript that always starts with "Recording" and is sometimes followed by a single word like "yeah" or "hello". Streaming mode does not exhibit this — it stays at blank tokens. Likely cause: the TDT decoder's language-model prior dominates when the acoustic signal is weak (a known RNN-T / TDT failure mode), and the start-of-recording click + room tone in the first ~0.5 s maps to a high-frequency English word ("Recording" is plausible). **Possible fixes (not yet attempted):** (a) RMS-energy VAD gate that skips transcription when the buffer never crosses a threshold; (b) drop the first ~200 ms of buffer before handing to TDT to skip the start-click. Neither is trivial — VAD needs threshold tuning across mic types (built-in vs AirPods vs Continuity), and the leading-trim doesn't help mid-utterance silence. Defer until enough user reports surface to justify the tuning effort.
@@ -651,4 +719,4 @@ Logged at the end of Sprint 4 — none of these block TestFlight, but flagging s
 
 ---
 
-*Last updated: 2026-05-20 — Sprint 5 / Phase J shipped end-to-end. Keyboard cold-start works (`EnvironmentValues().openURL` was the unlock). Streaming engine removed; single Parakeet TDT v3 with VAD-based chunk rotation. Live transcript flicker fixed via four-case hybrid in `TypingViewModel`. In-app feedback feature added under `ShhhcribbleiOS/Features/Feedback/`. See `HANDOFF.md` for current state, `backlog.md` for outstanding polish.*
+*Last updated: 2026-05-21 — Sprint 6 architectural deepening shipped. `TranscriptionService` (1134-LOC god actor) split into `TextEngine` + `AudioInput` + `RecordingCoordinator` + `TranscriptionStatus`. Three deep modules behind narrow interfaces, no behaviour change. See `backlog.md` for outstanding polish.*
