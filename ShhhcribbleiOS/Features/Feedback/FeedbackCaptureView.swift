@@ -1,19 +1,25 @@
+import MessageUI
 import SwiftUI
 import UIKit
 
 /// Modal capture for app feedback / bug reports.
 ///
-/// Flow:
+/// Flow (Sprint 7 redesign — record → review → SEND):
 ///   1. User taps "Record" → AVAudioRecorder writes a temp WAV.
 ///   2. Tap "Stop" → audio file is transcribed in-place via TDT
 ///      (one-shot, doesn't touch the live recording pipeline).
 ///   3. User reviews the transcript, optionally pastes a screenshot
 ///      and/or types a note.
-///   4. Save → FeedbackStore writes metadata.json + screenshot.png
-///      to Documents/Feedback/<uuid>/. The temp WAV is deleted.
+///   4. Tap **Send** → FeedbackStore persists metadata.json +
+///      screenshot.png to Documents/Feedback/<uuid>/, then the mail
+///      composer opens immediately. On successful send the item is
+///      marked `sentAt = Date()` in the store. On cancel/fail the
+///      item stays in the list as a draft so the user can retry from
+///      FeedbackListView.
 ///
-/// Pattern adapted from GFR_Field_Recorder's FeedbackRecordingView,
-/// scaled down for a single-user dogfooding loop.
+/// The previous "Save locally → maybe send later" workflow surfaced as
+/// confusing UX in Harry's first-round testing feedback (backlog #6).
+/// Default action is now Send; local persistence is implicit.
 struct FeedbackCaptureView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var recorder = FeedbackRecorder()
@@ -23,11 +29,15 @@ struct FeedbackCaptureView: View {
     @State private var phase: Phase = .idle
     @State private var errorMessage: String?
 
+    @State private var pendingMailItem: FeedbackItem?
+    @State private var showMailComposer = false
+    @State private var showNoMailAlert = false
+
     enum Phase {
         case idle              // Not yet recording.
         case recording         // AVAudioRecorder writing the temp file.
         case transcribing      // Recording stopped, TDT pass in flight.
-        case review            // Have transcript, user can edit + save.
+        case review            // Have transcript, user can edit + send.
     }
 
     var body: some View {
@@ -75,16 +85,58 @@ struct FeedbackCaptureView: View {
             .navigationTitle("New feedback")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Discard demoted: smaller, destructive tint, lives in
+                // the cancellation slot but visually de-emphasises so
+                // it isn't symmetric with Send. Harry's complaint (b)
+                // was that Cancel and Save read as equivalent options.
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { recorder.discard(); dismiss() }
+                    Button(role: .destructive) {
+                        recorder.discard()
+                        dismiss()
+                    } label: {
+                        Text("Discard").font(.subheadline)
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save", action: save)
-                        .disabled(transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button(action: sendNow) {
+                        Label("Send", systemImage: "paperplane.fill")
+                            .labelStyle(.titleAndIcon)
+                            .font(.body.weight(.semibold))
+                    }
+                    .disabled(!canSend)
                 }
+            }
+            .sheet(isPresented: $showMailComposer) {
+                if let item = pendingMailItem {
+                    FeedbackMailComposer(item: item) { sent in
+                        for sentItem in sent {
+                            FeedbackStore.shared.markSent(sentItem)
+                        }
+                        // Dismiss the capture view either way. The item is
+                        // already persisted; if the user cancelled the mail
+                        // composer, the draft stays in the list to retry.
+                        dismiss()
+                    }
+                    .ignoresSafeArea()
+                }
+            }
+            .alert("Mail not available", isPresented: $showNoMailAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Mail.app isn't set up on this device. Your feedback is saved locally — open Settings → Mail to configure an account, then send from the Feedback list.")
             }
         }
         .interactiveDismissDisabled(phase == .recording || phase == .transcribing)
+    }
+
+    private var canSend: Bool {
+        let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Phase guard so Send is dimmed while the user is still recording
+        // / mid-transcribe — sending an empty draft on accident wastes a
+        // mail-composer round trip.
+        guard phase != .recording, phase != .transcribing else { return false }
+        return !trimmedTranscript.isEmpty || !trimmedNote.isEmpty
     }
 
     private var recorderRow: some View {
@@ -209,16 +261,28 @@ struct FeedbackCaptureView: View {
         }
     }
 
-    private func save() {
+    /// Save the in-progress capture to disk and open the mail composer
+    /// immediately. On successful send, `FeedbackMailComposer.onSent`
+    /// fires and the item is marked sent in the store. On cancel/fail,
+    /// the item stays in the list as an unsent draft so the user can
+    /// retry from FeedbackListView's row → detail → Send button.
+    private func sendNow() {
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        FeedbackStore.shared.save(
+        let item = FeedbackStore.shared.save(
             transcript: trimmedTranscript,
             note: trimmedNote,
             screenshot: pastedImage,
             durationSeconds: recorder.elapsed
         )
-        dismiss()
+        guard MFMailComposeViewController.canSendMail() else {
+            // Item is persisted; user can configure Mail and retry from
+            // the list. Surface the constraint and dismiss.
+            showNoMailAlert = true
+            return
+        }
+        pendingMailItem = item
+        showMailComposer = true
     }
 
     private func formatTime(_ t: TimeInterval) -> String {

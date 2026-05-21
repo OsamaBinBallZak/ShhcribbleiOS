@@ -10,8 +10,6 @@ struct FeedbackListView: View {
     @State private var selectedIds: Set<URL> = []
     @State private var showBulkMail = false
     @State private var bulkMailItems: [FeedbackItem] = []
-    @State private var justSentItems: [FeedbackItem] = []
-    @State private var showDeleteAfterSend = false
     @State private var showNoMailAlert = false
 
     var body: some View {
@@ -41,23 +39,26 @@ struct FeedbackListView: View {
                     .disabled(selectedIds.isEmpty)
                 }
             } else {
+                // Sprint 7 redesign: power-user actions (select-mode,
+                // send-all) live behind a single "…" Menu in the toolbar
+                // — they're rare-use, and competing with the primary "+"
+                // record-new affordance was visually noisy. The "+"
+                // record button stays as the top-trailing primary action.
                 if !store.items.isEmpty {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Select") {
-                            withAnimation { editMode = .active }
-                        }
-                    }
-                }
-                // Send-all button (only when items exist) + record-new
-                // button as separate top-trailing items. Tiuri called out
-                // 2026-05-20 that a combined Menu reading "either share or
-                // record" was confusing — they're unrelated actions.
-                if !store.items.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            startBulkSend(items: store.items)
+                        Menu {
+                            Button {
+                                withAnimation { editMode = .active }
+                            } label: {
+                                Label("Select items…", systemImage: "checklist")
+                            }
+                            Button {
+                                startBulkSend(items: store.items)
+                            } label: {
+                                Label("Send all (\(store.items.count))", systemImage: "paperplane.fill")
+                            }
                         } label: {
-                            Image(systemName: "paperplane.fill")
+                            Image(systemName: "ellipsis.circle")
                                 .font(.title3)
                         }
                     }
@@ -81,13 +82,15 @@ struct FeedbackListView: View {
         }
         .sheet(isPresented: $showBulkMail) {
             FeedbackMailComposer(items: bulkMailItems) { sent in
-                justSentItems = sent
-                // Show the delete prompt on the next runloop tick — the
-                // sheet's own dismiss animation needs to finish first or
-                // the alert mounts behind the disappearing sheet.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    showDeleteAfterSend = true
+                // Mark each successfully-sent item; no delete prompt.
+                // User keeps history on device per Harry's feedback
+                // (backlog #6c) — the "Sent ✓" badge on each row
+                // makes status visible without nagging.
+                for item in sent {
+                    store.markSent(item)
                 }
+                withAnimation { editMode = .inactive }
+                selectedIds.removeAll()
             }
             .ignoresSafeArea()
         }
@@ -95,21 +98,6 @@ struct FeedbackListView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Mail.app isn't set up on this device. To send feedback, configure a mail account in Settings → Mail.")
-        }
-        .alert("Sent — delete from device?", isPresented: $showDeleteAfterSend) {
-            Button("Keep", role: .cancel) {
-                justSentItems = []
-            }
-            Button("Delete", role: .destructive) {
-                for item in justSentItems {
-                    store.delete(item)
-                }
-                justSentItems = []
-                withAnimation { editMode = .inactive }
-                selectedIds.removeAll()
-            }
-        } message: {
-            Text("\(justSentItems.count) feedback item\(justSentItems.count == 1 ? "" : "s") sent. Delete from this device now?")
         }
         .onAppear {
             store.reload()
@@ -128,15 +116,10 @@ struct FeedbackListView: View {
     }
 
     /// Materialise the currently-selected IDs into actual FeedbackItem
-    /// records. Used by the bulk mail composer + the post-send delete
-    /// flow.
+    /// records. Used by the bulk mail composer's `Send N` button.
     private var itemsForSelection: [FeedbackItem] {
         store.items.filter { selectedIds.contains($0.id) }
     }
-
-    // Note: post-send → delete-prompt handoff happens via the
-    // `onSent` callback on FeedbackMailComposer, not onDismiss, so
-    // we can distinguish a sent vs cancelled flow.
 
     /// Stage the given items for the bulk-mail sheet. Used by both the
     /// edit-mode "Send N" button (selected items) and the toolbar
@@ -238,9 +221,14 @@ struct FeedbackListView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                Text(relativeDate(item.createdAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text(relativeDate(item.createdAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if item.isSent {
+                        SentBadge()
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -260,12 +248,31 @@ private struct FeedbackDetailView: View {
     @ObservedObject private var store = FeedbackStore.shared
     @State private var showMailComposer = false
     @State private var mailUnavailableAlert = false
-    @State private var showDeleteAfterSend = false
+
+    /// Re-read the item from the store after a successful send so the
+    /// sentAt badge updates without dismissing first. The original
+    /// `item` is a value snapshot; the store mutates the on-disk record.
+    private var currentItem: FeedbackItem {
+        store.items.first(where: { $0.id == item.id }) ?? item
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if currentItem.isSent, let sentAt = currentItem.sentAt {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                            Text("Sent on \(sentAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
                     if let img = item.screenshotImage {
                         Image(uiImage: img)
                             .resizable().scaledToFit()
@@ -299,7 +306,7 @@ private struct FeedbackDetailView: View {
                             mailUnavailableAlert = true
                         }
                     } label: {
-                        Label("Send to Tiuri", systemImage: "paperplane.fill")
+                        Label(currentItem.isSent ? "Send again" : "Send to Tiuri", systemImage: "paperplane.fill")
                             .font(.body.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 4)
@@ -318,11 +325,12 @@ private struct FeedbackDetailView: View {
                 }
             }
             .sheet(isPresented: $showMailComposer) {
-                FeedbackMailComposer(item: item) { _ in
-                    // Successful send — prompt to delete on the next runloop
-                    // tick after the sheet finishes dismissing.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        showDeleteAfterSend = true
+                FeedbackMailComposer(item: item) { sent in
+                    // Mark sent — no delete prompt. Item stays in the
+                    // list with a "Sent ✓" badge so the user retains a
+                    // record of what they reported (backlog #6c).
+                    for sentItem in sent {
+                        store.markSent(sentItem)
                     }
                 }
                 .ignoresSafeArea()
@@ -330,18 +338,27 @@ private struct FeedbackDetailView: View {
             .alert("Mail not available", isPresented: $mailUnavailableAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Mail.app isn't set up on this device. Use the Share button in the list to send via another app.")
-            }
-            .alert("Sent — delete from device?", isPresented: $showDeleteAfterSend) {
-                Button("Keep", role: .cancel) {}
-                Button("Delete", role: .destructive) {
-                    store.delete(item)
-                    dismiss()
-                }
-            } message: {
-                Text("Feedback sent. Delete from this device now?")
+                Text("Mail.app isn't set up on this device. Configure a mail account in Settings → Mail and try again.")
             }
         }
+    }
+}
+
+/// Pill badge rendered on the right of each row when an item has been
+/// sent (i.e. `FeedbackItem.isSent == true`). Visible status indicator
+/// for Harry's complaint d) "no status indicator for sent vs not yet".
+private struct SentBadge: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.caption2)
+            Text("Sent")
+                .font(.caption2.weight(.semibold))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.green.opacity(0.15), in: Capsule())
+        .foregroundStyle(.green)
     }
 }
 
