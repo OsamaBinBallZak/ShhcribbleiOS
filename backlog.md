@@ -4,6 +4,48 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## Real-user feedback from first internal testing — 2026-05-21
+
+Harry (harryhutton92@gmail.com — primary tester) and Tiuri sent 8 unique voice-feedback items via the new Feedback feature after the `1.0.0 (2)` TestFlight build. Raw zips at `/Users/tiurihartog/Hackerman/ShhcribbleiOS/feedback/extracted/` if anyone wants the original transcripts.
+
+### 🔴 Bugs to fix soon
+
+**FB-1. Keyboard is always in CAPS (Tiuri).** The Shhhcribble keyboard's letter keys are all uppercase. Almost certainly a KeyboardKit default override — needs `shiftState` config or similar on the `KeyboardView`. Tiuri also said "we need to fix the keyboard anyway, so that's probably part of that, right?" — implies a broader keyboard visual redesign is desired alongside this.
+
+**FB-2. Recording-state get-stuck bug, recurring (Tiuri).** Mid-session in keyboard cold-start sometimes hits a state where: recording UI is up, waveform shows, but no text appears and Cancel/Save buttons don't respond. Force-quit + reopen sometimes fixes it. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
+
+Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code base architecture using the skill" — wants a focused investigation session. Probably involves running the app under `--console` and capturing the actor state when the freeze happens.
+
+### 🟡 UX papercuts — clear wins, small lifts
+
+**FB-3. The play FAB icon (▶) is wrong (Harry).** Triangle reads as "play something that exists" — confusing for recording. Should be a mic icon, ideally with "Record" label. ~5 min change in `ContentView.swift`'s `StartRecordingButton`.
+
+**FB-4. First-launch empty state is broken (Harry).** Opens app → empty state says "press play to listen to a transcript" (we don't actually have that copy literally, but this is what it feels like). User has no idea what to do. Empty state needs a big explicit "Tap the mic to start your first dictation" with an arrow/pointer to the FAB. Harry: "I'm just gonna tap the screen — it's like this didn't fucking do anything. Piece of shit app, uninstall."
+
+**FB-5. Keyboard recording UI lacks visual feedback (Harry).** Inside the keyboard, the recording state just shows "Recording" text + square stop button. No movement. Needs at minimum a fake animated waveform; ideally live transcript like Aqua Voice. Related to but more important than the existing "Stop-button animation + sounds" backlog entry — that's about the in-app overlay; Harry's pointing at the IN-KEYBOARD UI being static.
+
+### 🟠 Feedback flow needs rework (Harry — FB-6)
+
+Harry made a coherent UX case against the current design. Four sub-issues:
+
+a) **The "save locally → maybe send later" workflow is weird.** Default should be "record → review → send". Saving without sending defeats the purpose.
+
+b) **Easy to close the feedback modal without sending.** Cancel button is symmetrically prominent with Save. Harry was confused about what saved without sending even meant.
+
+c) **The "delete after send" prompt is wrong.** He wants to *keep* track of what he's told us. Deleting just because it was sent is anti-feature.
+
+d) **No status indicator for "this has been sent" vs "not yet".** Items just sit in the list with no visible state.
+
+Proposed redesign: on Save in `FeedbackCaptureView`, auto-stage for send (mail composer opens immediately). After successful send, the item gets a **"Sent ✓" badge** in the list. Items aren't deleted unless the user explicitly deletes them. Bulk-send + select-mode become optional power features, not the default flow.
+
+### 🟢 Onboarding polish (Harry — FB-7, FB-8)
+
+**FB-7. Keyboard activation should explain permissions inline (Harry).** Onboarding's KeyboardPage (post-Plan-item-5) has numbered steps + "Open Keyboard Settings" deep link, but Harry wants the permissions explained at each stage with more hand-holding. Particularly the Full Access toggle — what it does, why it's safe, what won't work without it.
+
+**FB-8. "Enabling…" splash when user accepts keyboard from another app (Harry).** When user is in WhatsApp/Notes, taps Globe, then "Set Up New Keyboard" → picks Shhhcribble, ideally there's a flash overlay saying "Enabling Shhhcribble keyboard…" then auto-returns to WhatsApp with our keyboard's mic ready. Caveat: iOS owns the keyboard-picker flow; we can't insert a Shhhcribble screen there. What we CAN polish is the keyboard's first-load state — "Tap the mic to dictate" instead of just rendering empty.
+
+---
+
 ## Stashed 2026-05-20 PM — three changes that were built but not verifiably tested
 
 These were written in the afternoon session, never confirmed working, then reverted at Tiuri's request because the session had drifted into "build without verify" territory. Code lives in `git stash@{0}` ("Phase J Tier 6+ untested: bigger SwipeBackHint card, launchedFromKeyboard swipe-back-stop fix, ModelLoadingBanner."). Revisit individually when there's bandwidth + internet to test on device.
