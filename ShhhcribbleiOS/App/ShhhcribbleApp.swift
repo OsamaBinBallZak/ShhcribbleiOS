@@ -20,16 +20,16 @@ struct ShhhcribbleApp: App {
     @AppStorage("onboardingComplete") private var onboardingComplete: Bool = false
 
     init() {
-        AudioSessionManager.shared.configure()
+        AudioInput.shared.configure()
         // Warm mode at launch: only if the user picked "Always" in Settings.
         // Default (off + 60s) means the dot only shows during active
         // sessions. Each keyboard cold-start opens the app, enters warm
         // mode + starts recording, then auto-exits 60s after the last
         // recording ends.
         if UserDefaults.standard.bool(forKey: "warmModeAlways") {
-            AudioSessionManager.shared.enterWarmMode()
+            AudioInput.shared.enterWarmMode()
         }
-        AudioInterruptionObserver.shared.start()
+        AudioInput.shared.startObservingInterruptions()
         // Phase J Tier 2 — Push to Talk entitlement + background mode
         // are kept (they extend our background runtime), but we do NOT
         // link PushToTalk.framework. Superwhisper's IPA confirms they
@@ -97,7 +97,7 @@ struct ShhhcribbleApp: App {
                        readyAt != preStop {
                         let transcript = KeyboardBridge.consumeTranscript() ?? ""
                         if releaseMic {
-                            AudioSessionManager.shared.exitWarmMode()
+                            AudioInput.shared.exitWarmMode()
                         }
                         return transcript
                     }
@@ -134,7 +134,7 @@ struct ShhhcribbleApp: App {
             var n = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
-                if AudioSessionManager.shared.warmModeActive {
+                if AudioInput.shared.warmModeActive {
                     KeyboardBridge.heartbeat()
                     n += 1
                     if n % 2 == 0 {
@@ -288,8 +288,8 @@ struct ShhhcribbleApp: App {
             // skip the app-switch entirely.
             // `keyboard` is the Superwhisper-style short form (no path),
             // `record-from-keyboard` is the legacy long form. Both work.
-            if !AudioSessionManager.shared.warmModeActive {
-                AudioSessionManager.shared.enterWarmMode()
+            if !AudioInput.shared.warmModeActive {
+                AudioInput.shared.enterWarmMode()
             }
             startURLLaunchedRecording(trigger: .keyboard)
         case "stop":

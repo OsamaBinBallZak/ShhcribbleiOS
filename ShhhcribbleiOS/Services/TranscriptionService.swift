@@ -62,7 +62,7 @@ final class TranscriptionStatus: ObservableObject {
     /// True when the audio engine is running but no buffers have arrived
     /// for the staleness threshold (~1.5 s). Most common cause: AirPods
     /// held by another device (Mac via Continuity), or the user pulled
-    /// the AirPods just as recording started. Set by AudioRecorder's
+    /// the AirPods just as recording started. Set by AudioInput's
     /// watchdog timer; the recording overlay reads this and renders a
     /// "Waiting for audio device…" banner so the user understands why
     /// the waveform isn't moving.
@@ -90,19 +90,22 @@ final class TranscriptionStatus: ObservableObject {
     }
 }
 
-/// `TranscriptionService` is the recording-lifecycle coordinator. It owns
-/// the audio recorder, the phase state machine, and the side-effects on
-/// stop (SwiftData commit, clipboard write, App Group hand-off for the
-/// keyboard, Live Activity, background-task plumbing). Transcription itself
-/// — model lifecycle, VAD, buffer accumulation, vocabulary passes — lives
-/// in `TextEngine`. This actor consumes the recorder's buffer stream,
-/// feeds buffers into `TextEngine.feed`, polls `TextEngine.liveSnapshot`
-/// for the in-overlay typewriter, and calls `TextEngine.finalize` /
-/// `discard` on stop / cancel.
+/// `TranscriptionService` is the recording-lifecycle coordinator. It runs
+/// the phase state machine and orchestrates the upstream `AudioInput` and
+/// the downstream `TextEngine`. On stop it commits to SwiftData, writes
+/// the transcript to the clipboard, hands off to the keyboard via the App
+/// Group, schedules warm-mode idle expiry, and clears the Live Activity.
+///
+/// Recording flow (since Step 2): consume `AudioInput.shared.start(...)`
+/// as a `for await buffer in stream` loop, feeding each buffer into
+/// `TextEngine.shared.feed`. The stream finishes when `stopRecording` or
+/// `cancelRecording` calls `AudioInput.stop()` / `AudioInput.cancel()`.
+/// The loop exits naturally; the post-loop block branches on the
+/// `cancelled` flag to either discard (cancel path) or finalize +
+/// commit (stop path). No `CheckedContinuation` needed.
 actor TranscriptionService {
     static let shared = TranscriptionService()
 
-    private var recorder: AudioRecorder?
     private var recording = false
     private var stopRequested = false
     /// Set by `stopRecording` when called before `recordAndTranscribe`
@@ -117,15 +120,9 @@ actor TranscriptionService {
     /// `recordAndTranscribe` to wrap the body; allows `stopRecording` /
     /// `cancelRecording` to do a synchronous `Task.cancel()` as a hard
     /// kill-switch when the actor state has drifted into an inconsistent
-    /// state and the normal continuation-based stop path is stuck. Per
-    /// research agent #3 (see SPRINT5_REPORT.md): flag-based cooperative
-    /// cancel only fires at await boundaries we remember to check; a
-    /// Task cancel + `Task.checkCancellation()` at every phase boundary
-    /// is the idiomatic Swift pattern. We run both in parallel — the
-    /// continuation handles the happy path, Task.cancel() is recovery.
+    /// state and the normal stream-finish path is stuck.
     private var recordingTask: Task<Void, Error>?
 
-    private var feedTask: Task<Void, Never>?
     private var tdtLiveTask: Task<Void, Never>?
     private var tdtLastLiveAt: Date?
     private var recordingStartedAt: Date?
@@ -135,19 +132,10 @@ actor TranscriptionService {
     /// `recordAndTranscribe` and cleared on every exit path.
     private var appendTargetId: UUID?
     private static let tdtLiveInterval: TimeInterval = 0.7
-    private var streamContinuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
-
-    private var finishContinuation: CheckedContinuation<String, Never>?
 
     private init() {}
 
     var isRecording: Bool { recording }
-
-    private func resumeFinish(_ value: String) {
-        guard let cont = finishContinuation else { return }
-        finishContinuation = nil
-        cont.resume(returning: value)
-    }
 
     /// Thin wrapper preserving the public name. Existing callers in
     /// `ShhhcribbleApp.init` keep working without churn; the actual
@@ -170,6 +158,8 @@ actor TranscriptionService {
         await TextEngine.shared.reload()
     }
 
+    /// Graceful stop. Finishes the `AudioInput` stream; the for-await loop
+    /// in `performRecording` exits, drives `TextEngine.finalize`, commits.
     func stopRecording() async {
         guard recording, !stopRequested else {
             if !recording {
@@ -192,20 +182,8 @@ actor TranscriptionService {
             return
         }
         stopRequested = true
-        AudioInterruptionObserver.shared.recordingDidStop()
         await TranscriptionStatus.shared.event("Manual stop")
-
-        recorder?.stop()
-        streamContinuation?.finish()
-        tdtLiveTask?.cancel()
-
-        if let feedTask {
-            _ = await feedTask.value
-        }
-        await TranscriptionStatus.shared.event("Drained buffers")
-
-        let stitched = await TextEngine.shared.finalize()
-        resumeFinish(stitched)
+        AudioInput.shared.stop()
     }
 
     /// Real abort — drop audio, skip transcription, skip SwiftData write,
@@ -224,27 +202,16 @@ actor TranscriptionService {
         }
         cancelled = true
         stopRequested = true
-        AudioInterruptionObserver.shared.recordingDidStop()
         await TranscriptionStatus.shared.event("Cancel")
-
-        recorder?.stop()
-        streamContinuation?.finish()
-        tdtLiveTask?.cancel()
-        feedTask?.cancel()
-
-        await TextEngine.shared.discard()
-
-        // Resume the awaiter in recordAndTranscribe with empty text — the
-        // `cancelled` flag is checked there to skip commit + SwiftData write.
-        resumeFinish("")
+        AudioInput.shared.cancel()
     }
 
     private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
 
     /// Public entry point. Wraps the body in an internal `Task` so callers
     /// of `stopRecording` / `cancelRecording` can hard-cancel via
-    /// `Task.cancel()` in addition to the existing continuation-based
-    /// stop. The body throws `CancellationError` at any `Task.checkCancellation()`
+    /// `Task.cancel()` if the stream-finish path gets stuck. The body
+    /// throws `CancellationError` at any `Task.checkCancellation()`
     /// call site if cancel fires; we swallow it here so callers don't
     /// need to handle it.
     func recordAndTranscribe(
@@ -336,7 +303,6 @@ actor TranscriptionService {
                 TranscriptionStatus.shared.appendTargetTitle = nil
             }
         }
-        AudioInterruptionObserver.shared.recordingDidStart()
 
         // For keyboard-triggered recordings, snapshot the user's existing
         // clipboard so we can restore it after autopaste — they didn't ask
@@ -350,7 +316,7 @@ actor TranscriptionService {
         // A recording is starting → cancel any pending warm-mode auto-expiry.
         // It'll be rescheduled in `commit` when this recording finishes.
         await MainActor.run {
-            AudioSessionManager.shared.cancelIdleExpiry()
+            AudioInput.shared.cancelIdleExpiry()
         }
 
         // Clear any leftover partial snippet from a prior recording so the
@@ -373,9 +339,6 @@ actor TranscriptionService {
         }
         self.bgTaskId = taskId
         await TranscriptionStatus.shared.event("Triggered")
-        // No more pause/resume of the warm engine — the single-engine
-        // design has AudioRecorder install a tap on the same engine
-        // that's playing silence, so they coexist by design.
         await setUIRecording(true)
         let activityOK = await MainActor.run { ShhhcribbleActivityManager.shared.start() }
         if !activityOK {
@@ -408,42 +371,31 @@ actor TranscriptionService {
 
         try Task.checkCancellation()
 
-        let recorder = AudioRecorder()
-        self.recorder = recorder
-
-        let buffers = AsyncStream<AVAudioPCMBuffer>(bufferingPolicy: .unbounded) { continuation in
-            self.streamContinuation = continuation
-            do {
-                try recorder.start(
-                    onBuffer: { buffer in
-                        continuation.yield(buffer)
-                    },
-                    onLevel: { level in
-                        // Hop to MainActor to update the published level.
-                        // ~20 Hz writes — fine for SwiftUI.
-                        Task { @MainActor in
-                            TranscriptionStatus.shared.audioLevel = Double(level)
-                        }
-                    }
-                )
-            } catch {
-                continuation.finish()
-            }
+        // Bring the mic up. `AudioInput.start` returns an AsyncStream that
+        // we consume directly with for-await; teardown happens when
+        // `stopRecording` / `cancelRecording` call `AudioInput.stop()` /
+        // `AudioInput.cancel()` which finish the stream.
+        let stream: AsyncStream<AVAudioPCMBuffer>
+        do {
+            stream = try AudioInput.shared.start(onLevel: { level in
+                Task { @MainActor in
+                    TranscriptionStatus.shared.audioLevel = Double(level)
+                }
+            })
+        } catch {
+            await notifyError(.other("Recording failed to start."))
+            return
         }
 
+        // Wait for the model. If load fails or the task is cancelled, tear
+        // down audio and surface the error.
         do {
             try await modelReady
         } catch is CancellationError {
-            recorder.stop()
-            streamContinuation?.finish()
-            streamContinuation = nil
-            self.recorder = nil
+            AudioInput.shared.cancel()
             throw CancellationError()
         } catch {
-            recorder.stop()
-            streamContinuation?.finish()
-            streamContinuation = nil
-            self.recorder = nil
+            AudioInput.shared.cancel()
             await notifyError(.modelLoadFailed(humaniseModelLoadError(error)))
             return
         }
@@ -452,44 +404,31 @@ actor TranscriptionService {
 
         await TranscriptionStatus.shared.event("Recording…")
 
-        // The stream and engine are now live. If a stop or cancel was
-        // requested during the pre-engine init window (Darwin race), tear
-        // down NOW — at this point streamContinuation and recorder exist
-        // and stopRecording() can do its normal job.
+        // If a stop or cancel arrived during pre-engine init (Darwin race),
+        // honour it now — finish the stream so the for-await below exits
+        // immediately.
         if stopRequested {
             await TranscriptionStatus.shared.event("Honouring pre-engine stop request — tearing down now")
-            recorder.stop()
-            streamContinuation?.finish()
-            streamContinuation = nil
-            // Fall through to the TDT setup below so the existing commit +
-            // cleanup path runs. The stop flag short-circuits any further
-            // sample accumulation.
+            if cancelled {
+                AudioInput.shared.cancel()
+            } else {
+                AudioInput.shared.stop()
+            }
         }
 
-        // Accumulate buffers; separately, re-transcribe every ~0.7s so
-        // the clipboard stays fresh while the app is foreground. iOS
-        // blocks pasteboard writes from backgrounded apps, so we can't
-        // wait until after the user taps the back pill.
-        //
-        // Note: no "Recording…" placeholder text. TypingViewModel uses
-        // a hybrid prefix/snap/rewind/reject scheme which means any
-        // initial partial that doesn't have prefix of the placeholder
-        // could leave it stuck. The waveform animation + the overlay's
-        // title give plenty of "recording is active" feedback; empty
-        // live text is fine until the first TDT result arrives.
+        // No "Recording…" placeholder text. TypingViewModel uses a
+        // hybrid prefix/snap/rewind/reject scheme which means any initial
+        // partial that doesn't have prefix of the placeholder could leave
+        // it stuck. The waveform animation + the overlay's title give
+        // plenty of "recording is active" feedback; empty live text is
+        // fine until the first TDT result arrives.
         await MainActor.run {
             TranscriptionStatus.shared.partialSnippet = ""
         }
-        let feed = Task.detached {
-            for await buffer in buffers {
-                await TextEngine.shared.feed(buffer)
-                await TranscriptionService.shared.maybeKickLiveSnapshot()
-            }
-        }
-        self.feedTask = feed
 
-        // Safety-net timer in case the buffer-arrival trigger misses
-        // (e.g. silence keeps the audio engine from delivering buffers).
+        // Safety-net timer for the live snapshot in case the buffer-arrival
+        // trigger misses (e.g. silence keeps the audio engine from delivering
+        // buffers). Cancelled when the for-await loop exits.
         let live = Task.detached(priority: .userInitiated) {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(Self.tdtLiveInterval * 1_000_000_000))
@@ -499,27 +438,30 @@ actor TranscriptionService {
         }
         self.tdtLiveTask = live
 
-        let transcript: String = await withCheckedContinuation { cont in
-            self.finishContinuation = cont
+        // Consume audio buffers directly. Loop exits when AudioInput.stop /
+        // AudioInput.cancel finishes the stream — either via the explicit
+        // stop/cancel public methods, or via the route-change handler if
+        // the engine couldn't be rebuilt.
+        for await buffer in stream {
+            await TextEngine.shared.feed(buffer)
+            await maybeKickLiveSnapshot()
         }
 
-        recorder.stop()
-        streamContinuation?.finish()
-        streamContinuation = nil
-        self.recorder = nil
-        self.feedTask = nil
         self.tdtLiveTask?.cancel()
         self.tdtLiveTask = nil
 
-        await TranscriptionStatus.shared.event("Got: \"\(transcript)\"")
-
+        // Stream finished. Branch on cancel vs stop.
         if cancelled {
             await TranscriptionStatus.shared.event("Cancelled — discarding transcript")
+            await TextEngine.shared.discard()
             await MainActor.run {
                 TranscriptionStatus.shared.partialSnippet = ""
             }
             return
         }
+
+        let transcript = await TextEngine.shared.finalize()
+        await TranscriptionStatus.shared.event("Got: \"\(transcript)\"")
 
         // `transcript` is already vocabulary-filtered (`TextEngine.finalize`
         // applies the filler + substitution passes in one place). No further
@@ -539,7 +481,7 @@ actor TranscriptionService {
             }
             // Idle expiry still counts even if no transcript landed.
             await MainActor.run {
-                AudioSessionManager.shared.scheduleIdleExpiry()
+                AudioInput.shared.scheduleIdleExpiry()
             }
             return
         }
@@ -646,7 +588,7 @@ actor TranscriptionService {
         }
         // Recording finalised — start the warm-mode idle countdown.
         // If the user picked "Always" in Settings, this is a no-op.
-        AudioSessionManager.shared.scheduleIdleExpiry()
+        AudioInput.shared.scheduleIdleExpiry()
     }
 
     @MainActor

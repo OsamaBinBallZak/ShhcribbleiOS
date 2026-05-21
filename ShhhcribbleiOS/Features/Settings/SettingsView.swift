@@ -195,14 +195,14 @@ struct SettingsView: View {
     /// re-launch the app for the change to take effect.
     private func applyWarmModeSetting() {
         if warmModeAlways {
-            AudioSessionManager.shared.enterWarmMode()
-            AudioSessionManager.shared.cancelIdleExpiry()
+            AudioInput.shared.enterWarmMode()
+            AudioInput.shared.cancelIdleExpiry()
         } else {
             // If warm mode is currently active because of a session, just
             // re-schedule the expiry with the new duration. If it's not
             // active, do nothing — next keyboard tap will start a session.
-            if AudioSessionManager.shared.warmModeActive {
-                AudioSessionManager.shared.scheduleIdleExpiry()
+            if AudioInput.shared.warmModeActive {
+                AudioInput.shared.scheduleIdleExpiry()
             }
         }
     }
