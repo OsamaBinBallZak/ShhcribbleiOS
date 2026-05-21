@@ -36,17 +36,7 @@ Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code bas
 
 ### 🟠 Feedback flow needs rework
 
-#6. **Feedback flow needs rework (Harry).** Harry made a coherent UX case against the current design. Four sub-issues:
-
-a) **The "save locally → maybe send later" workflow is weird.** Default should be "record → review → send". Saving without sending defeats the purpose.
-
-b) **Easy to close the feedback modal without sending.** Cancel button is symmetrically prominent with Save. Harry was confused about what saved without sending even meant.
-
-c) **The "delete after send" prompt is wrong.** He wants to *keep* track of what he's told us. Deleting just because it was sent is anti-feature.
-
-d) **No status indicator for "this has been sent" vs "not yet".** Items just sit in the list with no visible state.
-
-Proposed redesign: on Save in `FeedbackCaptureView`, auto-stage for send (mail composer opens immediately). After successful send, the item gets a **"Sent ✓" badge** in the list. Items aren't deleted unless the user explicitly deletes them. Bulk-send + select-mode become optional power features, not the default flow.
+#6. ~~**Feedback flow needs rework (Harry).**~~ ✅ Shipped 2026-05-21 (Sprint 7). Capture view: Cancel + Save replaced by demoted Discard + prominent Send; Send saves to disk and opens mail composer immediately. List view: green "Sent ✓" pill on rows that have been emailed; "Delete from device?" alert removed entirely; bulk-send + select-mode moved into a "…" menu so they don't compete with the primary "+" record-new button. Detail view: "Sent on <date>" banner + "Send again" button label for already-sent items. All four sub-complaints (a/b/c/d) addressed. Architecturally also resolved candidate #4 (FeedbackRecorder + FeedbackMailComposer extracted to their own files; FeedbackStore migrated to Codable + gained `sentAt: Date?` field and `markSent(_:)` method).
 
 ### 🟢 Onboarding polish
 
