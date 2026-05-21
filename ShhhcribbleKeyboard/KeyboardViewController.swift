@@ -72,25 +72,31 @@ final class KeyboardViewController: KeyboardInputViewController {
                 OpenURLCapture(onCapture: { [weak self] action in
                     self?.capturedOpenURL = action
                 }) {
-                    VStack(spacing: 0) {
-                        ShhhcribbleToolbar(
-                            state: self.toolbarState,
-                            onVoice: { [weak self] in self?.handleVoiceTap() },
-                            onStopActive: { [weak self] in self?.handleStopActiveRecording() }
-                        )
-                        .padding(.horizontal, 4)
-                        .padding(.top, 4)
-
-                        KeyboardView(
-                            state: controller.state,
-                            services: controller.services,
-                            buttonContent: { $0.view },
-                            buttonView: { $0.view },
-                            collapsedView: { $0.view },
-                            emojiKeyboard: { $0.view },
-                            toolbar: { _ in EmptyView() }   // we render our own
-                        )
-                    }
+                    // Render the pill INSIDE KeyboardKit's `toolbar:` slot
+                    // rather than in an outer VStack. KeyboardKit reserves
+                    // a fixed height for the toolbar slot regardless of
+                    // what we pass; using it directly means the slot's
+                    // height ≈ our pill's height, so the gray surface
+                    // visually wraps the pill instead of leaving empty
+                    // space above it.
+                    KeyboardView(
+                        state: controller.state,
+                        services: controller.services,
+                        buttonContent: { $0.view },
+                        buttonView: { $0.view },
+                        collapsedView: { $0.view },
+                        emojiKeyboard: { $0.view },
+                        toolbar: { [weak self] _ in
+                            guard let self else { return AnyView(EmptyView()) }
+                            return AnyView(
+                                ShhhcribbleToolbar(
+                                    state: self.toolbarState,
+                                    onVoice: { [weak self] in self?.handleVoiceTap() },
+                                    onStopActive: { [weak self] in self?.handleStopActiveRecording() }
+                                )
+                            )
+                        }
+                    )
                 }
             )
         }

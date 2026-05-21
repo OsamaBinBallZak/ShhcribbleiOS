@@ -351,6 +351,9 @@ actor RecordingCoordinator {
             Task { @MainActor in
                 ShhhcribbleActivityManager.shared.end()
             }
+            // Clear live-stream data so the keyboard pill doesn't show
+            // a stale waveform/transcript next time it appears.
+            KeyboardBridge.clearLiveStreams()
         }
 
         async let modelReady: Void = TextEngine.shared.ensureLoaded()
@@ -363,9 +366,20 @@ actor RecordingCoordinator {
         // `AudioInput.cancel()` which finish the stream.
         let stream: AsyncStream<AVAudioPCMBuffer>
         do {
+            // Throttle App Group writes for the keyboard pill's audio bars
+            // to ~10 Hz. AudioInput delivers level callbacks at ~20 Hz; we
+            // publish every callback to TranscriptionStatus (in-process,
+            // free) but only every-other-tick to KeyboardBridge (cross-
+            // process, UserDefaults round-trip).
+            var lastKeyboardLevelWriteAt = Date.distantPast
             stream = try AudioInput.shared.start(onLevel: { level in
                 Task { @MainActor in
                     TranscriptionStatus.shared.audioLevel = Double(level)
+                    let now = Date()
+                    if now.timeIntervalSince(lastKeyboardLevelWriteAt) >= 0.1 {
+                        lastKeyboardLevelWriteAt = now
+                        KeyboardBridge.writeLiveAudioLevel(Double(level))
+                    }
                 }
             })
         } catch {
@@ -512,6 +526,11 @@ actor RecordingCoordinator {
                 UIPasteboard.general.string = snippet
                 ShhhcribbleActivityManager.shared.update(snippet: liveActivitySnippet)
             }
+            // Pipe the partial to the App Group so the keyboard pill's
+            // live-transcript text can render in real time. Bounded to
+            // the last 120 chars — the keyboard only shows a single
+            // line of trailing text.
+            KeyboardBridge.writeLivePartial(String(snippet.suffix(120)))
         }
     }
 

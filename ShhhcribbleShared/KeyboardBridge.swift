@@ -76,6 +76,8 @@ public enum KeyboardBridge {
         static let recordingActive = "keyboard.recordingActive"      // Bool
         static let recordingActiveAt = "keyboard.recordingActiveAt"  // Date
         static let debugLog = "keyboard.debugLog"            // [String] of recent log lines
+        static let liveAudioLevel = "keyboard.liveAudioLevel"        // Double 0...1
+        static let livePartial = "keyboard.livePartial"              // String
     }
 
     // MARK: Debug log (keyboard writes, main app reads + prints)
@@ -171,6 +173,42 @@ public enum KeyboardBridge {
     public static var isEngineWarm: Bool {
         guard let last = defaults?.object(forKey: Key.engineKeepAlive) as? Date else { return false }
         return Date().timeIntervalSince(last) < keepAliveStale
+    }
+
+    // MARK: Live recording state (main → keyboard, polled)
+    //
+    // While a recording is active in the main app, two values are
+    // streamed to the App Group for the keyboard pill to render:
+    //
+    //   liveAudioLevel — Double 0...1, smoothed mic RMS. Drives the
+    //     audio bars in the pill. Written at ~10 Hz to keep the
+    //     UserDefaults traffic reasonable.
+    //   livePartial   — current partial transcript. Written each time
+    //     RecordingCoordinator publishes a new live snapshot (~700 ms).
+    //
+    // The keyboard polls these at the same ~100 ms cadence it already
+    // uses for `isRecordingActive`. No Darwin notification — the
+    // keyboard only needs them while it knows recording is active.
+
+    public static func writeLiveAudioLevel(_ level: Double) {
+        defaults?.set(level, forKey: Key.liveAudioLevel)
+    }
+
+    public static var liveAudioLevel: Double {
+        defaults?.double(forKey: Key.liveAudioLevel) ?? 0
+    }
+
+    public static func writeLivePartial(_ text: String) {
+        defaults?.set(text, forKey: Key.livePartial)
+    }
+
+    public static var livePartial: String {
+        defaults?.string(forKey: Key.livePartial) ?? ""
+    }
+
+    public static func clearLiveStreams() {
+        defaults?.removeObject(forKey: Key.liveAudioLevel)
+        defaults?.removeObject(forKey: Key.livePartial)
     }
 
     // MARK: Transcript handoff (main → keyboard)

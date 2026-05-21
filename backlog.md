@@ -4,6 +4,18 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## Keyboard pill redesign WIP — 2026-05-21
+
+#20. **Gray bar above the keyboard pill is still too tall (Tiuri).** Sprint 8 keyboard redesign shipped a 38pt dark pill (down from 48pt) but the iOS keyboard surface area above the pill is taller than the pill itself — the gray "wraps" the pill on the sides but extends far higher on the top. Two attempts to fix:
+- Attempt 1: `.padding(4)` all around the pill inside `ShhhcribbleToolbar`, remove the outer VStack's `.padding(.top, 4)`. No visible change on device.
+- Attempt 2: render `ShhhcribbleToolbar` inside KeyboardKit's `KeyboardView(toolbar: { _ in ... })` slot instead of in our own VStack. Also no visible change.
+
+Suspect: iOS reserves a minimum keyboard-toolbar inset above any custom keyboard, OR KeyboardKit's `toolbar:` slot has a fixed minimum height that ignores its content size, OR the safe-area inset is being applied invisibly. Need to inspect KeyboardKit's KeyboardView internals (`Sources/KeyboardKit/...`) for the toolbar slot height, then either override it or use a different layout API.
+
+#21. **Auto-paste from keyboard mic + stop is broken (Tiuri, 2026-05-21).** Tied to FB-2 — the recording-state desync. When user taps the keyboard pill's mic button and the main app foregrounds with the broken overlay, they can't tap stop, so the transcript never gets to `commit()` and `KeyboardBridge.writeTranscript` never fires. Net result: no auto-paste. Will resolve when #2 is fixed.
+
+---
+
 ## Architecture-split smoke-test observations — 2026-05-21
 
 #19. **Music doesn't resume after recording stops (Tiuri).** Started music on the phone, tapped play FAB → music ducked → recording captured → after stop, music did not auto-resume. Root cause is pre-existing: warm mode keeps the AVAudioSession active for 60s after the last recording (default), so we never call `setActive(false, .notifyOthersOnDeactivation)` which is what tells the music app it can resume. Two options: (a) deactivate the session briefly between recordings even with warm mode on (might thrash the orange mic indicator), or (b) accept the trade-off and update onboarding to mention "music pauses while Shhhcribble is warm". Same behavior in the unrefactored code — not a Step 2 regression.
@@ -22,9 +34,47 @@ Harry (harryhutton92@gmail.com — primary tester) and Tiuri sent 8 unique voice
 
 #1. ~~**Keyboard is always in CAPS (Tiuri).**~~ ✅ Shipped 2026-05-21. Root cause: `KeyboardSettings.isAutocapitalizationEnabled` (`@AppStorage` backed) had been persisted as `false`. KeyboardContext.init's `syncAutocapitalizationWithSetting` therefore set `autocapitalizationTypeOverride = .none`, hard-disabling all case changes. Fix: defensive reset of `keyboardCase = .auto` + `autocapitalizationTypeOverride = nil` + `isAutocapitalizationEnabled = true` in `viewWillSetupKeyboardView`, runs on every keyboard appearance so we self-heal from any future bad persisted state. Note Tiuri reported originally "all CAPS" but later reports said "all lowercase" — both are the same root cause, the autocap pipeline being hard-disabled, expressed differently depending on what previous shift state was persisted.
 
-#2. **Recording-state get-stuck bug, recurring (Tiuri).** Mid-session in keyboard cold-start sometimes hits a state where: recording UI is up, waveform shows, but no text appears and Cancel/Save buttons don't respond. Force-quit + reopen sometimes fixes it. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
+#2. **Recording-state get-stuck bug, recurring + persistent (Tiuri).** Mid-session in keyboard cold-start hits a state where: recording overlay is up, but Cancel and Copy/Save buttons don't respond to taps. Force-quit + reopen sometimes fixes it but the bug recurs immediately the moment the user re-triggers the keyboard mic. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
 
-Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code base architecture using the skill" — wants a focused investigation session. Probably involves running the app under `--console` and capturing the actor state when the freeze happens.
+**Latest reproduction 2026-05-21 (post-Sprint-6 split + keyboard pill redesign):**
+- User in Notes app with Shhhcribble keyboard active
+- Taps mic on the keyboard pill → app foregrounds via `shhhcribble://keyboard` cold-start URL
+- Recording overlay appears in main app, BUT Cancel + Copy/Save buttons are inert
+- User taps Cancel repeatedly → nothing happens
+- User taps Copy/Save repeatedly → nothing happens
+- User closes app, tries again → same bug fires immediately
+- User keeps spamming the keyboard mic button → main app keeps "opening" but the broken overlay just keeps surfacing
+
+**Console log capture from one of these reproductions** (truncated):
+```
+PTT signal: start at 2026-05-21 16:30:09 +0000
+[kb 17:30:09.743] voiceButton.onTapGesture fired (idle mic)
+[kb 17:30:09.746] voice tap: warm=false active=false
+[kb 17:30:09.749] openContainingApp via captured @Environment(\.openURL) url=shhhcribble://keyboard
+darwinStart received
+Triggered
+Stop: already stopping or not recording
+Stop: already stopping or not recording
+Stop: already stopping or not recording
+```
+
+The repeated "Stop: already stopping or not recording" means the user tapping Cancel/Stop is reaching `RecordingCoordinator.stopRecording()`, but the actor's `recording` flag is `false` — so the guard at the top fires and the call is a no-op. Meanwhile the overlay is still visible because `TranscriptionStatus.phase == .recording`. **The actor state and the UI state have desynced.**
+
+Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code base architecture using the skill" — wants a focused investigation session. The Sprint 6 architectural split (RecordingCoordinator / TextEngine / AudioInput) didn't fix this — bug persists. Likely a race between `recording = true` being set inside `performRecording` and the keyboard's stop signal arriving via Darwin. The `pendingStopBeforeStart` plumbing was meant to handle this race but appears not to cover the case where recording NEVER actually starts (stuck in init).
+
+**Likely root cause hypothesis:**
+- `recordAndTranscribe` starts, sets `recording = true`, runs preflight (mic permission, etc.)
+- Something fails or hangs in setup (`AudioInput.start` throws? `modelReady` blocks?), `recording` stays at `false` after the early-bail path, but the UI was already moved to `.recording` phase by `setUIRecording(true)` BEFORE the failure
+- Now phase=.recording but actor recording=false → desync
+- User taps Stop → guard fires → no-op
+
+**To investigate next session:**
+1. Reproduce on device with `--console` attached
+2. Add diagnostic logging to every `recording = true/false` assignment + phase setPhase call so the desync moment is visible
+3. Specifically watch what happens between "Triggered" log and the first "Stop: already stopping or not recording"
+4. Hypothesis to test: `setUIRecording(true)` setting phase happens before `recording = true` propagates atomically, OR the `recording = false` gets reset by an early-return path that doesn't also reset phase
+
+Likely fix once root cause is known: keep phase and `recording` flag updated atomically — either both via `setPhase`/`setUIRecording` together, or expose recording-state purely through `TranscriptionStatus.phase` and derive `RecordingCoordinator.recording` from it.
 
 ### 🟡 UX papercuts — clear wins, small lifts
 
