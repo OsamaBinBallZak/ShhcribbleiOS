@@ -4,8 +4,12 @@ import UIKit
 /// File-based feedback storage. Each captured item lives at
 /// `Documents/Feedback/<uuid>/`:
 ///
-///     metadata.json   { createdAt, transcript, note, hasScreenshot, durationSeconds }
+///     metadata.json   { createdAt, transcript, note, hasScreenshot, durationSeconds, sentAt? }
 ///     screenshot.png  (optional — pasted from the user's clipboard)
+///
+/// `sentAt` (Codable optional) tracks whether the item has been emailed
+/// to the recipient. Nil for drafts, populated on successful mail send.
+/// Used by the list view to render a "Sent ✓" badge.
 ///
 /// Audio is captured during recording but discarded once we have the
 /// transcript — Tiuri wants the text, not the audio (per design
@@ -59,15 +63,15 @@ final class FeedbackStore: ObservableObject {
             .sorted { $0.createdAt > $1.createdAt }
     }
 
-    /// Save a new feedback item. Returns the folder URL so the caller
-    /// can optionally drop a screenshot into it separately.
+    /// Save a new feedback item. Returns the persisted item so the caller
+    /// can stage it for sending or grab its folder URL.
     @discardableResult
     func save(
         transcript: String,
         note: String,
         screenshot: UIImage?,
         durationSeconds: Double
-    ) -> URL {
+    ) -> FeedbackItem {
         let id = UUID()
         let folder = root.appendingPathComponent(id.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -78,18 +82,29 @@ final class FeedbackStore: ObservableObject {
             hasScreenshot = true
         }
 
-        let metadata: [String: Any] = [
-            "createdAt": ISO8601DateFormatter().string(from: Date()),
-            "transcript": transcript,
-            "note": note,
-            "hasScreenshot": hasScreenshot,
-            "durationSeconds": durationSeconds,
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: metadata, options: .prettyPrinted) {
-            try? data.write(to: folder.appendingPathComponent("metadata.json"))
-        }
+        let metadata = FeedbackMetadata(
+            createdAt: Date(),
+            transcript: transcript,
+            note: note,
+            hasScreenshot: hasScreenshot,
+            durationSeconds: durationSeconds,
+            sentAt: nil
+        )
+        metadata.write(to: folder)
         reload()
-        return folder
+        return items.first { $0.folder == folder } ?? FeedbackItem(folder: folder, metadata: metadata)
+    }
+
+    /// Mark an item as sent. Persists `sentAt = Date()` to its metadata.json
+    /// and reloads so the list view sees the new flag. Idempotent — if the
+    /// item is already marked sent, the existing timestamp is preserved
+    /// (re-sends don't bump the "first sent" record).
+    func markSent(_ item: FeedbackItem) {
+        guard item.sentAt == nil else { return }
+        var metadata = item.metadata
+        metadata.sentAt = Date()
+        metadata.write(to: item.folder)
+        reload()
     }
 
     func delete(_ item: FeedbackItem) {
@@ -98,15 +113,68 @@ final class FeedbackStore: ObservableObject {
     }
 }
 
-struct FeedbackItem: Identifiable, Hashable {
-    let folder: URL
+/// On-disk schema for `metadata.json`. Codable so reads + writes share
+/// one definition. `sentAt` is optional — pre-2026-05-21 items don't have
+/// the key; Codable's `decodeIfPresent` returns nil for those, which is
+/// correct (they were created before sent-tracking existed and we don't
+/// know whether they were sent).
+struct FeedbackMetadata: Codable {
     let createdAt: Date
     let transcript: String
     let note: String
     let hasScreenshot: Bool
     let durationSeconds: Double
+    var sentAt: Date?
+
+    private static let iso = ISO8601DateFormatter()
+
+    private static func makeEncoder() -> JSONEncoder {
+        let enc = JSONEncoder()
+        enc.outputFormatting = .prettyPrinted
+        // Match the original wire format (ISO8601) so existing items
+        // continue to read after the Codable migration.
+        enc.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(iso.string(from: date))
+        }
+        return enc
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            return iso.date(from: raw) ?? Date()
+        }
+        return dec
+    }
+
+    static func load(from folder: URL) -> FeedbackMetadata? {
+        let url = folder.appendingPathComponent("metadata.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? makeDecoder().decode(FeedbackMetadata.self, from: data)
+    }
+
+    func write(to folder: URL) {
+        guard let data = try? Self.makeEncoder().encode(self) else { return }
+        try? data.write(to: folder.appendingPathComponent("metadata.json"))
+    }
+}
+
+struct FeedbackItem: Identifiable, Hashable {
+    let folder: URL
+    let metadata: FeedbackMetadata
 
     var id: URL { folder }
+    var createdAt: Date { metadata.createdAt }
+    var transcript: String { metadata.transcript }
+    var note: String { metadata.note }
+    var hasScreenshot: Bool { metadata.hasScreenshot }
+    var durationSeconds: Double { metadata.durationSeconds }
+    var sentAt: Date? { metadata.sentAt }
+    var isSent: Bool { metadata.sentAt != nil }
+
     var screenshotURL: URL { folder.appendingPathComponent("screenshot.png") }
 
     var screenshotImage: UIImage? {
@@ -115,18 +183,15 @@ struct FeedbackItem: Identifiable, Hashable {
     }
 
     static func load(from folder: URL) -> FeedbackItem? {
-        let metadataURL = folder.appendingPathComponent("metadata.json")
-        guard let data = try? Data(contentsOf: metadataURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let createdAtRaw = json["createdAt"] as? String ?? ""
-        let createdAt = ISO8601DateFormatter().date(from: createdAtRaw) ?? Date()
-        return FeedbackItem(
-            folder: folder,
-            createdAt: createdAt,
-            transcript: json["transcript"] as? String ?? "",
-            note: json["note"] as? String ?? "",
-            hasScreenshot: json["hasScreenshot"] as? Bool ?? false,
-            durationSeconds: json["durationSeconds"] as? Double ?? 0
-        )
+        guard let metadata = FeedbackMetadata.load(from: folder) else { return nil }
+        return FeedbackItem(folder: folder, metadata: metadata)
+    }
+
+    static func == (lhs: FeedbackItem, rhs: FeedbackItem) -> Bool {
+        lhs.folder == rhs.folder && lhs.sentAt == rhs.sentAt
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(folder)
     }
 }
