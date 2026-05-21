@@ -20,7 +20,7 @@ Harry (harryhutton92@gmail.com — primary tester) and Tiuri sent 8 unique voice
 
 ### 🔴 Bugs to fix soon
 
-#1. **Keyboard is always in CAPS (Tiuri).** The Shhhcribble keyboard's letter keys are all uppercase. Almost certainly a KeyboardKit default override — needs `shiftState` config or similar on the `KeyboardView`. Tiuri also said "we need to fix the keyboard anyway, so that's probably part of that, right?" — implies a broader keyboard visual redesign is desired alongside this.
+#1. ~~**Keyboard is always in CAPS (Tiuri).**~~ ✅ Shipped 2026-05-21. Root cause: `KeyboardSettings.isAutocapitalizationEnabled` (`@AppStorage` backed) had been persisted as `false`. KeyboardContext.init's `syncAutocapitalizationWithSetting` therefore set `autocapitalizationTypeOverride = .none`, hard-disabling all case changes. Fix: defensive reset of `keyboardCase = .auto` + `autocapitalizationTypeOverride = nil` + `isAutocapitalizationEnabled = true` in `viewWillSetupKeyboardView`, runs on every keyboard appearance so we self-heal from any future bad persisted state. Note Tiuri reported originally "all CAPS" but later reports said "all lowercase" — both are the same root cause, the autocap pipeline being hard-disabled, expressed differently depending on what previous shift state was persisted.
 
 #2. **Recording-state get-stuck bug, recurring (Tiuri).** Mid-session in keyboard cold-start sometimes hits a state where: recording UI is up, waveform shows, but no text appears and Cancel/Save buttons don't respond. Force-quit + reopen sometimes fixes it. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
 
@@ -28,7 +28,7 @@ Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code bas
 
 ### 🟡 UX papercuts — clear wins, small lifts
 
-#3. **The play FAB icon (▶) is wrong (Harry).** Triangle reads as "play something that exists" — confusing for recording. Should be a mic icon, ideally with "Record" label. ~5 min change in `ContentView.swift`'s `StartRecordingButton`.
+#3. ~~**The play FAB icon (▶) is wrong (Harry).**~~ ✅ Shipped 2026-05-21. `play.fill` → `mic.fill` in `StartRecordingButton` (`ContentView.swift`). The "Record" label was considered but the FAB has no room for a label — icon-only stays compact, and the mic glyph is already universal.
 
 #4. **First-launch empty state is broken (Harry).** Opens app → empty state says "press play to listen to a transcript" (we don't actually have that copy literally, but this is what it feels like). User has no idea what to do. Empty state needs a big explicit "Tap the mic to start your first dictation" with an arrow/pointer to the FAB. Harry: "I'm just gonna tap the screen — it's like this didn't fucking do anything. Piece of shit app, uninstall."
 
