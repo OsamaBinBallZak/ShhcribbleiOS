@@ -1,20 +1,11 @@
 import AVFoundation
 import Combine
-import CoreML
-import FluidAudio
 import Foundation
 import ShhhcribbleShared
 import UIKit
 import os
 
 private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "service")
-
-enum ModelStatus: Equatable {
-    case notLoaded
-    case loading
-    case ready
-    case error(String)
-}
 
 enum RecordingPhase: Equatable {
     case idle
@@ -37,35 +28,6 @@ enum RecordingError: Equatable {
             return detail
         }
     }
-}
-
-// Map raw `Error` instances to short, user-readable copy. The default
-// `String(describing: error)` dumps the entire NSError userInfo blob,
-// which is unreadable in the Settings status row and the recording
-// overlay error card. Most failures here are network errors from the
-// HuggingFace download of the TDT model on first use.
-func humaniseModelLoadError(_ error: Error) -> String {
-    let nsError = error as NSError
-    if nsError.domain == NSURLErrorDomain {
-        switch nsError.code {
-        case NSURLErrorNotConnectedToInternet,
-             NSURLErrorNetworkConnectionLost,
-             NSURLErrorDataNotAllowed:
-            return "No internet connection. Parakeet TDT v3 needs a one-time download (~494 MB) on first use."
-        case NSURLErrorTimedOut,
-             NSURLErrorCannotFindHost,
-             NSURLErrorCannotConnectToHost,
-             NSURLErrorDNSLookupFailed,
-             NSURLErrorResourceUnavailable:
-            return "Couldn't reach the model download server. Try again in a moment."
-        default:
-            return "Network error: \(error.localizedDescription)"
-        }
-    }
-    if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(ENOSPC) {
-        return "Not enough free space to download the model (~494 MB needed)."
-    }
-    return error.localizedDescription
 }
 
 // Note: AsrMode (streaming + tdt) was removed 2026-05-20. We now use
@@ -128,62 +90,19 @@ final class TranscriptionStatus: ObservableObject {
     }
 }
 
+/// `TranscriptionService` is the recording-lifecycle coordinator. It owns
+/// the audio recorder, the phase state machine, and the side-effects on
+/// stop (SwiftData commit, clipboard write, App Group hand-off for the
+/// keyboard, Live Activity, background-task plumbing). Transcription itself
+/// — model lifecycle, VAD, buffer accumulation, vocabulary passes — lives
+/// in `TextEngine`. This actor consumes the recorder's buffer stream,
+/// feeds buffers into `TextEngine.feed`, polls `TextEngine.liveSnapshot`
+/// for the in-overlay typewriter, and calls `TextEngine.finalize` /
+/// `discard` on stop / cancel.
 actor TranscriptionService {
     static let shared = TranscriptionService()
 
-    private var tdtManager: AsrManager?
-    /// Voice Activity Detection — Silero-style neural classifier from
-    /// FluidAudio, completely separate from ASR. Used to find natural
-    /// chunk boundaries during long recordings so we can rotate the
-    /// accumulated `tdtBuffers` before they OOM the process (~37 min
-    /// caused an iOS jetsam pre-fix). Step A loads. Step B (current)
-    /// runs the streaming chunk processor in parallel with TDT
-    /// accumulation and logs speech-start/end events. Step C will
-    /// use those events to rotate the buffer.
-    private var vadManager: VadManager?
-    /// Running state for VadManager.processStreamingChunk — accumulates
-    /// model hidden state across chunks. Initialised per recording in
-    /// performRecording, cleared on stop/cancel.
-    private var vadStreamState: VadStreamState?
-    /// Pending 16 kHz mono Float samples not yet processed by VAD.
-    /// VadManager wants exact 4096-sample chunks (~256 ms at 16 kHz);
-    /// our incoming buffers come in ~100 ms 24 kHz units, so we
-    /// resample + buffer until we have enough for one chunk.
-    private var vadPendingSamples: [Float] = []
-    /// FluidAudio's public resampler. Default-initialised it targets
-    /// 16 kHz mono Float32 — exactly what VAD wants.
-    private let vadResampler = AudioConverter()
-    private static let vadChunkSize = 4096
-
-    // MARK: - Chunked transcription (Step C)
-
-    /// Transcripts of audio segments already committed earlier in this
-    /// recording. On rotation we transcribe + clear `tdtBuffers` then
-    /// append the result here. The displayed partial is
-    /// `committedChunks.joined(" ") + " " + currentLivePartial`. On
-    /// stop the final transcribe runs over the remaining `tdtBuffers`
-    /// and is appended to this array before commit.
-    private var committedChunks: [String] = []
-    /// Timestamp of the last successful chunk rotation, or recording
-    /// start if no rotation yet. Used to gate rotation triggers so
-    /// every short utterance ending doesn't fragment the transcript.
-    private var lastRotationAt: Date?
-    /// Reentrancy guard. Rotation transcribe + buffer clear must run
-    /// atomically — if a second VAD speechEnd fires while we're
-    /// mid-rotation, ignore it.
-    private var rotating = false
-    /// Minimum elapsed time since last rotation before a VAD
-    /// speechEnd is allowed to trigger a new rotation. Without this,
-    /// every short pause would create a tiny chunk. 30 s gives the
-    /// model meaningful context.
-    private static let minTimeBetweenRotations: TimeInterval = 30
-    /// Forced rotation deadline. If the user has talked continuously
-    /// for this long without a clean VAD-detected pause, force a
-    /// rotation anyway to keep memory bounded.
-    private static let maxTimeWithoutRotation: TimeInterval = 90
-
     private var recorder: AudioRecorder?
-    private var loadTask: Task<Void, Error>?
     private var recording = false
     private var stopRequested = false
     /// Set by `stopRecording` when called before `recordAndTranscribe`
@@ -208,7 +127,6 @@ actor TranscriptionService {
 
     private var feedTask: Task<Void, Never>?
     private var tdtLiveTask: Task<Void, Never>?
-    private var tdtLiveRunning = false
     private var tdtLastLiveAt: Date?
     private var recordingStartedAt: Date?
     private var currentTrigger: TriggerSource = .manual
@@ -218,7 +136,6 @@ actor TranscriptionService {
     private var appendTargetId: UUID?
     private static let tdtLiveInterval: TimeInterval = 0.7
     private var streamContinuation: AsyncStream<AVAudioPCMBuffer>.Continuation?
-    private var tdtBuffers: [AVAudioPCMBuffer] = []
 
     private var finishContinuation: CheckedContinuation<String, Never>?
 
@@ -232,115 +149,11 @@ actor TranscriptionService {
         cont.resume(returning: value)
     }
 
+    /// Thin wrapper preserving the public name. Existing callers in
+    /// `ShhhcribbleApp.init` keep working without churn; the actual
+    /// model-load work lives in `TextEngine`.
     func ensureModelLoaded() async throws {
-        if tdtManager != nil { return }
-        if let loadTask {
-            try await loadTask.value
-            return
-        }
-        await TranscriptionStatus.shared.set(.loading)
-        await TranscriptionStatus.shared.event("Loading Parakeet TDT v3…")
-        let task = Task { try await self.loadModel() }
-        loadTask = task
-        do {
-            try await task.value
-            loadTask = nil
-            await TranscriptionStatus.shared.set(.ready)
-            await TranscriptionStatus.shared.event("Model ready")
-        } catch {
-            loadTask = nil
-            await TranscriptionStatus.shared.set(.error(humaniseModelLoadError(error)))
-            await TranscriptionStatus.shared.event("Model load failed: \(error)")
-            throw error
-        }
-    }
-
-    private func loadModel() async throws {
-        let mlConfig = MLModelConfiguration()
-        let useANE = UserDefaults.standard.object(forKey: "useANE") as? Bool ?? true
-        mlConfig.computeUnits = useANE ? .cpuAndNeuralEngine : .cpuOnly
-
-        await unloadCurrent()
-
-        // Publish download fraction during the .downloading phase; reset to
-        // nil for listing/compiling and on completion, so the play-button ring
-        // only shows real byte transfer.
-        let progressHandler: DownloadUtils.ProgressHandler = { progress in
-            Task { @MainActor in
-                if case .downloading = progress.phase {
-                    TranscriptionStatus.shared.modelDownloadProgress = progress.fractionCompleted
-                } else {
-                    TranscriptionStatus.shared.modelDownloadProgress = nil
-                }
-            }
-        }
-        defer {
-            Task { @MainActor in
-                TranscriptionStatus.shared.modelDownloadProgress = nil
-            }
-        }
-
-        let models = try await AsrModels.downloadAndLoad(
-            configuration: mlConfig,
-            version: .v3,
-            progressHandler: progressHandler
-        )
-        let m = AsrManager(config: .default)
-        try await m.loadModels(models)
-        self.tdtManager = m
-
-        // VAD load. Small model (~1-3 MB) used for silence-based chunk
-        // boundary detection during long recordings. Failure to load is
-        // non-fatal — chunked-transcribe falls back to a hard time cap
-        // if vadManager stays nil.
-        do {
-            let vad = try await VadManager(progressHandler: nil)
-            self.vadManager = vad
-            await TranscriptionStatus.shared.event("VAD ready")
-        } catch {
-            await TranscriptionStatus.shared.event("VAD load failed (non-fatal): \(error.localizedDescription)")
-            self.vadManager = nil
-        }
-    }
-
-    private func unloadCurrent() async {
-        if let m = tdtManager {
-            await m.cleanup()
-            tdtManager = nil
-        }
-        // VadManager has no explicit cleanup; just drop the reference.
-        vadManager = nil
-    }
-
-    /// One-shot transcribe of an audio file. Loads the file with
-    /// AVAudioFile, hands the buffer to TDT, returns the transcript.
-    /// Used by the Feedback capture flow — it records via AVAudioRecorder
-    /// (independent of our main TDT live pipeline) and then transcribes
-    /// once on stop. Doesn't write a Note, doesn't touch `recording`
-    /// state — pure batch operation.
-    func transcribeOneShot(audioFileURL: URL) async throws -> String {
-        try await ensureModelLoaded()
-        guard let m = tdtManager else {
-            throw NSError(
-                domain: "Shhhcribble.TranscribeOneShot",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Transcription engine not loaded"]
-            )
-        }
-        let file = try AVAudioFile(forReading: audioFileURL)
-        let format = file.processingFormat
-        let frameCount = AVAudioFrameCount(file.length)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            throw NSError(
-                domain: "Shhhcribble.TranscribeOneShot",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Couldn't allocate audio buffer"]
-            )
-        }
-        try file.read(into: buffer)
-        var decoderState = TdtDecoderState.make()
-        let result = try await m.transcribe(buffer, decoderState: &decoderState)
-        return result.text
+        try await TextEngine.shared.ensureLoaded()
     }
 
     func reloadModel() async {
@@ -354,12 +167,7 @@ actor TranscriptionService {
         }
         reloading = true
         defer { reloading = false }
-
-        await unloadCurrent()
-        loadTask = nil
-        await TranscriptionStatus.shared.set(.notLoaded)
-        await TranscriptionStatus.shared.event("Unloaded")
-        try? await ensureModelLoaded()
+        await TextEngine.shared.reload()
     }
 
     func stopRecording() async {
@@ -396,37 +204,7 @@ actor TranscriptionService {
         }
         await TranscriptionStatus.shared.event("Drained buffers")
 
-        var finalSegment = ""
-        if let m = tdtManager, !tdtBuffers.isEmpty {
-            await TranscriptionStatus.shared.event("TDT transcribing \(tdtBuffers.count) buffers…")
-            if let merged = Self.concatenate(buffers: tdtBuffers) {
-                var decoderState = TdtDecoderState.make()
-                do {
-                    let result = try await m.transcribe(merged, decoderState: &decoderState)
-                    finalSegment = result.text
-                } catch {
-                    await TranscriptionStatus.shared.event("TDT error: \(error)")
-                }
-            }
-        }
-        // Step C: stitch the committed chunks (already filtered) with the
-        // newly-transcribed final segment (still raw). Filtering of the
-        // final segment happens downstream in performRecording's filter
-        // pass, so we leave it raw here and let that pass apply uniformly.
-        // The committed chunks were already filter+substitution-passed at
-        // rotation time, so re-running the filter on them would be a
-        // double-filter — instead, we concatenate as-is.
-        let stitched: String
-        if committedChunks.isEmpty {
-            stitched = finalSegment
-        } else {
-            let trimmedFinal = finalSegment.trimmingCharacters(in: .whitespacesAndNewlines)
-            stitched = trimmedFinal.isEmpty
-                ? committedChunks.joined(separator: " ")
-                : committedChunks.joined(separator: " ") + " " + trimmedFinal
-        }
-        await TranscriptionStatus.shared.event("Finish returned: \"\(stitched.prefix(200))\" (\(committedChunks.count) chunks + final)")
-
+        let stitched = await TextEngine.shared.finalize()
         resumeFinish(stitched)
     }
 
@@ -454,13 +232,7 @@ actor TranscriptionService {
         tdtLiveTask?.cancel()
         feedTask?.cancel()
 
-        tdtBuffers.removeAll(keepingCapacity: false)
-        vadStreamState = nil
-        vadPendingSamples.removeAll(keepingCapacity: false)
-        // Step C: drop any in-progress rotation state too.
-        committedChunks.removeAll(keepingCapacity: false)
-        lastRotationAt = nil
-        rotating = false
+        await TextEngine.shared.discard()
 
         // Resume the awaiter in recordAndTranscribe with empty text — the
         // `cancelled` flag is checked there to skip commit + SwiftData write.
@@ -549,14 +321,9 @@ actor TranscriptionService {
             stopRequested = true
             await TranscriptionStatus.shared.event("Deferred stop — will commit minimum-length recording")
         }
-        tdtBuffers.removeAll(keepingCapacity: true)
+        await TextEngine.shared.reset()
         tdtLastLiveAt = nil
         recordingStartedAt = Date()
-        await resetVadStream()
-        // Step C: rotation state — fresh per recording.
-        committedChunks.removeAll(keepingCapacity: false)
-        lastRotationAt = nil
-        rotating = false
         currentTrigger = trigger
         appendTargetId = appendingTo
         if let id = appendingTo {
@@ -585,12 +352,6 @@ actor TranscriptionService {
         await MainActor.run {
             AudioSessionManager.shared.cancelIdleExpiry()
         }
-
-        // No clipboard snapshot/restore in the in-app flow — the user's
-        // clipboard gets replaced by the transcript and stays there. Restore
-        // is reserved for the Sprint 5 keyboard-extension autopaste path,
-        // where the keyboard injects text and then needs to put the original
-        // clipboard back. ClipboardService.swift exists for that.
 
         // Clear any leftover partial snippet from a prior recording so the
         // RecordingView's typewriter starts from a clean slate. Without this
@@ -623,7 +384,6 @@ actor TranscriptionService {
         defer {
             recording = false
             stopRequested = false
-            tdtBuffers.removeAll()
             appendTargetId = nil
             let endId = self.bgTaskId
             self.bgTaskId = .invalid
@@ -644,7 +404,7 @@ actor TranscriptionService {
             }
         }
 
-        async let modelReady: Void = ensureModelLoaded()
+        async let modelReady: Void = TextEngine.shared.ensureLoaded()
 
         try Task.checkCancellation()
 
@@ -706,29 +466,24 @@ actor TranscriptionService {
             // sample accumulation.
         }
 
-        guard tdtManager != nil else {
-            await abortRecording()
-            return
-        }
-
-        // Accumulate buffers; separately, re-transcribe every ~1.5s so
+        // Accumulate buffers; separately, re-transcribe every ~0.7s so
         // the clipboard stays fresh while the app is foreground. iOS
         // blocks pasteboard writes from backgrounded apps, so we can't
         // wait until after the user taps the back pill.
         //
         // Note: no "Recording…" placeholder text. TypingViewModel uses
-        // Option B (no rewind in live preview) which means any initial
-        // partial that doesn't have prefix of the placeholder gets
-        // silently ignored, leaving the placeholder stuck. The waveform
-        // animation + the overlay's title give plenty of "recording is
-        // active" feedback; empty live text is fine until the first
-        // TDT result arrives.
+        // a hybrid prefix/snap/rewind/reject scheme which means any
+        // initial partial that doesn't have prefix of the placeholder
+        // could leave it stuck. The waveform animation + the overlay's
+        // title give plenty of "recording is active" feedback; empty
+        // live text is fine until the first TDT result arrives.
         await MainActor.run {
             TranscriptionStatus.shared.partialSnippet = ""
         }
         let feed = Task.detached {
             for await buffer in buffers {
-                await TranscriptionService.shared.appendTdtBuffer(buffer)
+                await TextEngine.shared.feed(buffer)
+                await TranscriptionService.shared.maybeKickLiveSnapshot()
             }
         }
         self.feedTask = feed
@@ -739,7 +494,7 @@ actor TranscriptionService {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(Self.tdtLiveInterval * 1_000_000_000))
                 if Task.isCancelled { break }
-                await TranscriptionService.shared.tdtLiveTranscribe()
+                await TranscriptionService.shared.performLiveSnapshot()
             }
         }
         self.tdtLiveTask = live
@@ -766,10 +521,10 @@ actor TranscriptionService {
             return
         }
 
-        let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-        let afterFiller = filterOn ? FillerWordFilter.filter(transcript) : transcript
-        let filtered = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
-        guard !filtered.isEmpty else {
+        // `transcript` is already vocabulary-filtered (`TextEngine.finalize`
+        // applies the filler + substitution passes in one place). No further
+        // transformation needed here.
+        guard !transcript.isEmpty else {
             await TranscriptionStatus.shared.event("Empty transcript — no speech detected")
             await MainActor.run {
                 TranscriptionStatus.shared.partialSnippet = ""
@@ -792,7 +547,7 @@ actor TranscriptionService {
         let duration = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
         let trigger = currentTrigger
         let target = appendTargetId
-        await commit(filtered, duration: duration, trigger: trigger, appendingTo: target)
+        await commit(transcript, duration: duration, trigger: trigger, appendingTo: target)
         await TranscriptionStatus.shared.event(target == nil ? "Copied to clipboard" : "Added to note")
         await maybeAutoBackground()
     }
@@ -801,227 +556,35 @@ actor TranscriptionService {
         await stopRecording()
     }
 
-    /// Run TDT on the current accumulated buffer and push the result to the
-    /// clipboard. Guarded so overlapping calls don't queue up.
-    private func tdtLiveTranscribe() async {
-        guard !stopRequested, !tdtLiveRunning, let m = tdtManager else { return }
-        // Step C: hard-cap rotation check. If we've been recording too
-        // long without a VAD-triggered rotation, force one now. Skip
-        // if we have no buffers to transcribe (rare edge case).
-        let startedAt = lastRotationAt ?? recordingStartedAt
-        if let s = startedAt, !tdtBuffers.isEmpty,
-           Date().timeIntervalSince(s) > Self.maxTimeWithoutRotation {
-            await maybeRotateChunk(triggerSource: "hard-cap")
-        }
-        guard !tdtBuffers.isEmpty else {
-            // After a rotation the live buffer is empty. Still update
-            // the displayed partial to show the committed prefix.
-            if !committedChunks.isEmpty {
-                let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-                let joinedRaw = committedChunks.joined(separator: " ")
-                let afterFiller = filterOn ? FillerWordFilter.filter(joinedRaw) : joinedRaw
-                let displayed = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
-                await MainActor.run {
-                    TranscriptionStatus.shared.partialSnippet = displayed
-                }
-            }
-            return
-        }
-        tdtLiveRunning = true
-        defer { tdtLiveRunning = false }
-
-        let snapshot = tdtBuffers
-        guard let merged = Self.concatenate(buffers: snapshot) else { return }
-        var state = TdtDecoderState.make()
-        do {
-            let result = try await m.transcribe(merged, decoderState: &state)
-            let text = result.text
-            guard !text.isEmpty else { return }
-            let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-            // Step C: filter the FULL combined raw text (committed + live)
-            // so filter passes work uniformly across the chunk boundary
-            // — e.g. a filler word straddling the boundary still gets
-            // caught. Committed is stored raw so this is safe.
-            let combinedRaw: String
-            if committedChunks.isEmpty {
-                combinedRaw = text
-            } else {
-                combinedRaw = committedChunks.joined(separator: " ") + " " + text
-            }
-            let afterFiller = filterOn ? FillerWordFilter.filter(combinedRaw) : combinedRaw
-            let displayed = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
-            // In-app overlay gets the full transcript so the typewriter
-            // can extend it smoothly. The Live Activity gets only a bounded
-            // tail because widget update payloads are rate-limited and the
-            // banner only renders one truncated line anyway.
-            let liveActivitySnippet = String(displayed.suffix(200))
-            await MainActor.run {
-                if !displayed.isEmpty {
-                    UIPasteboard.general.string = displayed
-                }
-                TranscriptionStatus.shared.partialSnippet = displayed
-                ShhhcribbleActivityManager.shared.update(snippet: liveActivitySnippet)
-            }
-        } catch {
-            // Best-effort — the final transcribe on stop will catch up.
-        }
-    }
-
-    private func appendTdtBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Copy the buffer — the tap reuses backing storage, so holding the
-        // original reference would mutate under us.
-        guard let copy = Self.copy(buffer: buffer) else { return }
-        tdtBuffers.append(copy)
-
-        // VAD: accumulate samples inline (cheap synchronous resample +
-        // append, no actor hop), only spawn a Task when we have enough
-        // samples for an actual VAD inference chunk. Cuts the per-buffer
-        // actor reentries by ~2.5x and lets TDT live transcribes get
-        // enough actor time to run smoothly. See Tier 6 Step D for the
-        // flicker root cause this addresses.
-        if vadManager != nil {
-            accumulateVADSamples(from: copy)
-        }
-
-        // Event-driven trigger: whenever fresh audio lands and enough time
-        // has elapsed since the last transcribe, kick one off. This catches
-        // the tail of an utterance faster than the timer alone.
+    /// Event-driven trigger: whenever fresh audio lands and enough time has
+    /// elapsed since the last live snapshot, kick one off. Catches the
+    /// tail of an utterance faster than the safety-net timer alone.
+    private func maybeKickLiveSnapshot() async {
+        guard !stopRequested else { return }
         let now = Date()
         if tdtLastLiveAt.map({ now.timeIntervalSince($0) >= Self.tdtLiveInterval }) ?? true {
             tdtLastLiveAt = now
-            Task { await self.tdtLiveTranscribe() }
+            Task { await self.performLiveSnapshot() }
         }
     }
 
-    /// Synchronous half of VAD plumbing: resample the incoming buffer
-    /// (synchronous), append to the pending-samples accumulator, then
-    /// drain as many full 4096-sample chunks as we have, spawning one
-    /// Task per chunk for the actual VAD inference. Called inline from
-    /// `appendTdtBuffer` (already on the actor) so no extra actor hop.
-    private func accumulateVADSamples(from buffer: AVAudioPCMBuffer) {
-        let samples: [Float]
-        do {
-            samples = try vadResampler.resampleBuffer(buffer)
-        } catch {
-            // Resample failed — skip this buffer for VAD, recording continues.
-            return
-        }
-        vadPendingSamples.append(contentsOf: samples)
-        while vadPendingSamples.count >= Self.vadChunkSize {
-            let chunk = Array(vadPendingSamples.prefix(Self.vadChunkSize))
-            vadPendingSamples.removeFirst(Self.vadChunkSize)
-            Task { await self.processVADChunk(chunk) }
-        }
-    }
-
-    /// Async half of VAD plumbing: run the actual `processStreamingChunk`
-    /// inference, update the streaming state, log events, and trigger
-    /// rotation on speechEnd. One Task per chunk (~4 Hz at 16 kHz),
-    /// not per incoming buffer (~10 Hz).
-    private func processVADChunk(_ chunk: [Float]) async {
-        guard let vad = vadManager, var state = vadStreamState else { return }
-        do {
-            let result = try await vad.processStreamingChunk(chunk, state: state)
-            state = result.state
-            vadStreamState = state
-            if let event = result.event {
-                let kind = event.kind == .speechStart ? "speechStart" : "speechEnd"
-                await TranscriptionStatus.shared.event("VAD \(kind) @ sample \(event.sampleIndex) p=\(String(format: "%.2f", result.probability))")
-                if event.kind == .speechEnd {
-                    await maybeRotateChunk(triggerSource: "vad-speechEnd")
-                }
-            }
-        } catch {
-            await TranscriptionStatus.shared.event("VAD process err: \(error.localizedDescription)")
-        }
-    }
-
-    /// Step C — chunk rotation. Triggered by VAD speechEnd events (when
-    /// `minTimeBetweenRotations` has elapsed) and by the time-based
-    /// hard cap (`maxTimeWithoutRotation`). Snapshots the current
-    /// `tdtBuffers`, transcribes via TDT, applies the filler +
-    /// substitution filters, appends to `committedChunks`, and clears
-    /// the buffer. Reentrancy-guarded via `rotating`.
-    ///
-    /// Skips silently if no manager, no buffers, or already rotating.
-    private func maybeRotateChunk(triggerSource: String) async {
-        guard !rotating else { return }
-        guard recording, !stopRequested, !cancelled else { return }
-        guard let m = tdtManager, !tdtBuffers.isEmpty else { return }
-        let startedAt = lastRotationAt ?? recordingStartedAt ?? Date()
-        let elapsed = Date().timeIntervalSince(startedAt)
-        // For VAD-triggered, require minTimeBetweenRotations so we don't
-        // fragment on every short pause. For the hard-cap path
-        // (triggerSource == "hard-cap") the caller already verified
-        // elapsed > maxTimeWithoutRotation, so we skip the gate.
-        if triggerSource != "hard-cap", elapsed < Self.minTimeBetweenRotations {
-            return
-        }
-        rotating = true
-        let snapshot = tdtBuffers
-        tdtBuffers.removeAll(keepingCapacity: true)
-        defer { rotating = false }
-
-        await TranscriptionStatus.shared.event("Rotating chunk (\(triggerSource), \(snapshot.count) buffers, \(String(format: "%.1f", elapsed))s)")
-        guard let merged = Self.concatenate(buffers: snapshot) else {
-            // Couldn't merge — give up on this rotation, audio is lost.
-            // Recording continues; next rotation will catch fresh buffers.
-            return
-        }
-        var decoderState = TdtDecoderState.make()
-        let raw: String
-        do {
-            let result = try await m.transcribe(merged, decoderState: &decoderState)
-            raw = result.text
-        } catch {
-            await TranscriptionStatus.shared.event("Rotation TDT err: \(error.localizedDescription)")
-            return
-        }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            // Store RAW (unfiltered) — performRecording's final filter
-            // pass applies once to the stitched output. Storing raw
-            // avoids double-filtering and keeps the filter behaviour
-            // consistent if the user toggles filterFillerWords mid-
-            // recording. Display still shows the filtered version
-            // (see tdtLiveTranscribe + the MainActor block below).
-            committedChunks.append(trimmed)
-            // Refresh the displayed partial to include the new committed
-            // text (filtered for display). Without this the user sees
-            // the live preview suddenly become empty (tdtBuffers cleared)
-            // then re-populate; with this the committed prefix carries
-            // forward.
-            let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
-            let joinedRaw = committedChunks.joined(separator: " ")
-            let afterFiller = filterOn ? FillerWordFilter.filter(joinedRaw) : joinedRaw
-            let displayedSoFar = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())
-            await TranscriptionStatus.shared.event("Committed chunk: \"\(displayedSoFar.suffix(80))\"")
-            await MainActor.run {
-                TranscriptionStatus.shared.partialSnippet = displayedSoFar
+    /// Ask `TextEngine` for the current best-effort full transcript and
+    /// publish it to `TranscriptionStatus.partialSnippet`, the clipboard
+    /// (so a foregrounded user can paste mid-dictation), and the Live
+    /// Activity. Only writes pasteboard + Live Activity when the snippet
+    /// is non-empty so we don't clobber the user's prior clipboard before
+    /// the first TDT result arrives.
+    private func performLiveSnapshot() async {
+        guard !stopRequested else { return }
+        let snippet = await TextEngine.shared.liveSnapshot()
+        let liveActivitySnippet = String(snippet.suffix(200))
+        await MainActor.run {
+            TranscriptionStatus.shared.partialSnippet = snippet
+            if !snippet.isEmpty {
+                UIPasteboard.general.string = snippet
+                ShhhcribbleActivityManager.shared.update(snippet: liveActivitySnippet)
             }
         }
-        lastRotationAt = Date()
-    }
-
-    /// Reset VAD streaming state at the start of a new recording. Called
-    /// from performRecording so each recording starts from a clean VAD
-    /// state machine (no leftover triggered=true from a prior session).
-    private func resetVadStream() async {
-        guard let vad = vadManager else {
-            vadStreamState = nil
-            vadPendingSamples.removeAll(keepingCapacity: false)
-            return
-        }
-        vadStreamState = await vad.makeStreamState()
-        vadPendingSamples.removeAll(keepingCapacity: false)
-    }
-
-    private func abortRecording() async {
-        recorder?.stop()
-        streamContinuation?.finish()
-        streamContinuation = nil
-        recorder = nil
-        await notifyError(.other("Recording failed to start."))
     }
 
     @MainActor
@@ -1092,43 +655,5 @@ actor TranscriptionService {
         TranscriptionStatus.shared.partialSnippet = ""
         TranscriptionStatus.shared.launchedViaURL = false
         TranscriptionStatus.shared.setPhase(.error(error))
-    }
-
-    // MARK: - Buffer helpers
-
-    private static func copy(buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let dst = AVAudioPCMBuffer(
-            pcmFormat: buffer.format,
-            frameCapacity: buffer.frameLength
-        ) else { return nil }
-        dst.frameLength = buffer.frameLength
-        let channels = Int(buffer.format.channelCount)
-        let frames = Int(buffer.frameLength)
-        if let src = buffer.floatChannelData, let out = dst.floatChannelData {
-            for ch in 0..<channels {
-                memcpy(out[ch], src[ch], frames * MemoryLayout<Float>.size)
-            }
-        }
-        return dst
-    }
-
-    private static func concatenate(buffers: [AVAudioPCMBuffer]) -> AVAudioPCMBuffer? {
-        guard let first = buffers.first else { return nil }
-        let format = first.format
-        let total = buffers.reduce(AVAudioFrameCount(0)) { $0 + $1.frameLength }
-        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total) else { return nil }
-        out.frameLength = total
-        let channels = Int(format.channelCount)
-        var offset = 0
-        for buf in buffers {
-            let frames = Int(buf.frameLength)
-            if let src = buf.floatChannelData, let dst = out.floatChannelData {
-                for ch in 0..<channels {
-                    memcpy(dst[ch] + offset, src[ch], frames * MemoryLayout<Float>.size)
-                }
-            }
-            offset += frames
-        }
-        return out
     }
 }

@@ -173,7 +173,7 @@ struct FeedbackCaptureView: View {
         let existing = transcript
         Task {
             do {
-                let text = try await TranscriptionService.shared.transcribeOneShot(audioFileURL: url)
+                let text = try await TextEngine.shared.transcribeOneShot(audioFileURL: url)
                 let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true
                 let afterFiller = filterOn ? FillerWordFilter.filter(text) : text
                 let filtered = SubstitutionPass.apply(afterFiller, rules: SubstitutionPass.currentRules())

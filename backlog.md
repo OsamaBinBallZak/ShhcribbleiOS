@@ -1,6 +1,12 @@
 # Shhhcribble backlog
 
-Features and refinements we've consciously deferred. Tracked here so they don't get lost in commit history. Newest at the top; cross out when shipped.
+Features and refinements we've consciously deferred. Tracked here so they don't get lost in commit history. Newest at the top; cross out when shipped. Numbering is global across the whole file.
+
+---
+
+## Architecture-split smoke-test observations — 2026-05-21
+
+#17. **Two record-y buttons on the NoteDetail screen are confusing (Tiuri).** When viewing an existing note, the bottom bar shows the new mini-mic "Continue recording" FAB next to the regular play FAB. Tiuri's reaction on first encounter: "I didn't know it was an option. Very cool to see. It is kind of confusing that there is then two buttons that do stuff." Worth revisiting the affordance — maybe one button with a contextual action (when viewing a note: append; otherwise: new), or visual differentiation that makes the relationship obvious. Original B3 design (CLAUDE.md, Sprint 4.5+1) replaced an inline note-body button with this mini-FAB because the inline one was "easy to miss when scrolled"; the new arrangement made it discoverable but at the cost of side-by-side confusion. Not urgent — append-to-note works correctly when found.
 
 ---
 
@@ -10,23 +16,23 @@ Harry (harryhutton92@gmail.com — primary tester) and Tiuri sent 8 unique voice
 
 ### 🔴 Bugs to fix soon
 
-**FB-1. Keyboard is always in CAPS (Tiuri).** The Shhhcribble keyboard's letter keys are all uppercase. Almost certainly a KeyboardKit default override — needs `shiftState` config or similar on the `KeyboardView`. Tiuri also said "we need to fix the keyboard anyway, so that's probably part of that, right?" — implies a broader keyboard visual redesign is desired alongside this.
+#1. **Keyboard is always in CAPS (Tiuri).** The Shhhcribble keyboard's letter keys are all uppercase. Almost certainly a KeyboardKit default override — needs `shiftState` config or similar on the `KeyboardView`. Tiuri also said "we need to fix the keyboard anyway, so that's probably part of that, right?" — implies a broader keyboard visual redesign is desired alongside this.
 
-**FB-2. Recording-state get-stuck bug, recurring (Tiuri).** Mid-session in keyboard cold-start sometimes hits a state where: recording UI is up, waveform shows, but no text appears and Cancel/Save buttons don't respond. Force-quit + reopen sometimes fixes it. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
+#2. **Recording-state get-stuck bug, recurring (Tiuri).** Mid-session in keyboard cold-start sometimes hits a state where: recording UI is up, waveform shows, but no text appears and Cancel/Save buttons don't respond. Force-quit + reopen sometimes fixes it. Related to but not identical to the existing "First-record-after-install" item — that one's about first-ever recording producing empty transcript; this one is about UI freezing mid-session.
 
 Tiuri's diagnosis: "I want to audit the app a little bit, maybe improve code base architecture using the skill" — wants a focused investigation session. Probably involves running the app under `--console` and capturing the actor state when the freeze happens.
 
 ### 🟡 UX papercuts — clear wins, small lifts
 
-**FB-3. The play FAB icon (▶) is wrong (Harry).** Triangle reads as "play something that exists" — confusing for recording. Should be a mic icon, ideally with "Record" label. ~5 min change in `ContentView.swift`'s `StartRecordingButton`.
+#3. **The play FAB icon (▶) is wrong (Harry).** Triangle reads as "play something that exists" — confusing for recording. Should be a mic icon, ideally with "Record" label. ~5 min change in `ContentView.swift`'s `StartRecordingButton`.
 
-**FB-4. First-launch empty state is broken (Harry).** Opens app → empty state says "press play to listen to a transcript" (we don't actually have that copy literally, but this is what it feels like). User has no idea what to do. Empty state needs a big explicit "Tap the mic to start your first dictation" with an arrow/pointer to the FAB. Harry: "I'm just gonna tap the screen — it's like this didn't fucking do anything. Piece of shit app, uninstall."
+#4. **First-launch empty state is broken (Harry).** Opens app → empty state says "press play to listen to a transcript" (we don't actually have that copy literally, but this is what it feels like). User has no idea what to do. Empty state needs a big explicit "Tap the mic to start your first dictation" with an arrow/pointer to the FAB. Harry: "I'm just gonna tap the screen — it's like this didn't fucking do anything. Piece of shit app, uninstall."
 
-**FB-5. Keyboard recording UI lacks visual feedback (Harry).** Inside the keyboard, the recording state just shows "Recording" text + square stop button. No movement. Needs at minimum a fake animated waveform; ideally live transcript like Aqua Voice. Related to but more important than the existing "Stop-button animation + sounds" backlog entry — that's about the in-app overlay; Harry's pointing at the IN-KEYBOARD UI being static.
+#5. **Keyboard recording UI lacks visual feedback (Harry).** Inside the keyboard, the recording state just shows "Recording" text + square stop button. No movement. Needs at minimum a fake animated waveform; ideally live transcript like Aqua Voice. Related to but more important than the existing "Stop-button animation + sounds" backlog entry — that's about the in-app overlay; Harry's pointing at the IN-KEYBOARD UI being static.
 
-### 🟠 Feedback flow needs rework (Harry — FB-6)
+### 🟠 Feedback flow needs rework
 
-Harry made a coherent UX case against the current design. Four sub-issues:
+#6. **Feedback flow needs rework (Harry).** Harry made a coherent UX case against the current design. Four sub-issues:
 
 a) **The "save locally → maybe send later" workflow is weird.** Default should be "record → review → send". Saving without sending defeats the purpose.
 
@@ -38,11 +44,11 @@ d) **No status indicator for "this has been sent" vs "not yet".** Items just sit
 
 Proposed redesign: on Save in `FeedbackCaptureView`, auto-stage for send (mail composer opens immediately). After successful send, the item gets a **"Sent ✓" badge** in the list. Items aren't deleted unless the user explicitly deletes them. Bulk-send + select-mode become optional power features, not the default flow.
 
-### 🟢 Onboarding polish (Harry — FB-7, FB-8)
+### 🟢 Onboarding polish
 
-**FB-7. Keyboard activation should explain permissions inline (Harry).** Onboarding's KeyboardPage (post-Plan-item-5) has numbered steps + "Open Keyboard Settings" deep link, but Harry wants the permissions explained at each stage with more hand-holding. Particularly the Full Access toggle — what it does, why it's safe, what won't work without it.
+#7. **Keyboard activation should explain permissions inline (Harry).** Onboarding's KeyboardPage (post-Plan-item-5) has numbered steps + "Open Keyboard Settings" deep link, but Harry wants the permissions explained at each stage with more hand-holding. Particularly the Full Access toggle — what it does, why it's safe, what won't work without it.
 
-**FB-8. "Enabling…" splash when user accepts keyboard from another app (Harry).** When user is in WhatsApp/Notes, taps Globe, then "Set Up New Keyboard" → picks Shhhcribble, ideally there's a flash overlay saying "Enabling Shhhcribble keyboard…" then auto-returns to WhatsApp with our keyboard's mic ready. Caveat: iOS owns the keyboard-picker flow; we can't insert a Shhhcribble screen there. What we CAN polish is the keyboard's first-load state — "Tap the mic to dictate" instead of just rendering empty.
+#8. **"Enabling…" splash when user accepts keyboard from another app (Harry).** When user is in WhatsApp/Notes, taps Globe, then "Set Up New Keyboard" → picks Shhhcribble, ideally there's a flash overlay saying "Enabling Shhhcribble keyboard…" then auto-returns to WhatsApp with our keyboard's mic ready. Caveat: iOS owns the keyboard-picker flow; we can't insert a Shhhcribble screen there. What we CAN polish is the keyboard's first-load state — "Tap the mic to dictate" instead of just rendering empty.
 
 ---
 
@@ -50,23 +56,17 @@ Proposed redesign: on Save in `FeedbackCaptureView`, auto-stage for send (mail c
 
 These were written in the afternoon session, never confirmed working, then reverted at Tiuri's request because the session had drifted into "build without verify" territory. Code lives in `git stash@{0}` ("Phase J Tier 6+ untested: bigger SwipeBackHint card, launchedFromKeyboard swipe-back-stop fix, ModelLoadingBanner."). Revisit individually when there's bandwidth + internet to test on device.
 
-### 1. Bigger SwipeBackHint card with iPhone icon + orange dot
-
-Upgrade of the existing simple grey rectangle into a card-style layout: 44pt circle on the left with iPhone icon, then a small orange dot + "Shhhcribble is recording" headline, with the swipe instruction as secondary text below. Also includes an optional "Install shortcut" CTA underneath (hidden until we ship the `.shortcut` file).
+#9. **Bigger SwipeBackHint card with iPhone icon + orange dot.** Upgrade of the existing simple grey rectangle into a card-style layout: 44pt circle on the left with iPhone icon, then a small orange dot + "Shhhcribble is recording" headline, with the swipe instruction as secondary text below. Also includes an optional "Install shortcut" CTA underneath (hidden until we ship the `.shortcut` file).
 
 Untested because the keyboard cold-start path needed the Full Access reset + re-enable, and the model wouldn't load (offline). Worth re-attempting on a stable testing setup.
 
-### 2. `launchedFromKeyboard` flag to suppress auto-stop on swipe-back
-
-The scene-phase observer in `ShhhcribbleApp` auto-stops a launched-via-URL recording when the app goes to background. This is correct for Back-Tap / Shortcut launches ("tap back-pill = commit") but wrong for keyboard cold-starts where the user is supposed to swipe back to the keyboard while recording continues — directly contradicting our own swipe-back hint banner.
+#10. **`launchedFromKeyboard` flag to suppress auto-stop on swipe-back.** The scene-phase observer in `ShhhcribbleApp` auto-stops a launched-via-URL recording when the app goes to background. This is correct for Back-Tap / Shortcut launches ("tap back-pill = commit") but wrong for keyboard cold-starts where the user is supposed to swipe back to the keyboard while recording continues — directly contradicting our own swipe-back hint banner.
 
 Fix sketch: add `launchedFromKeyboard: Bool` published on `TranscriptionStatus`. Set true in `handle(url:)`'s `case "keyboard"` / `"record-from-keyboard"`. Reset wherever `launchedViaURL` is reset. Scene-phase check becomes `phase == .background && status.isRecording && status.launchedViaURL && !status.launchedFromKeyboard`.
 
 Untested because we couldn't reach the recording state without internet. Logic is straightforward; verify by: cold-start from keyboard, swipe right to return to host app, speak, return to Shhhcribble, confirm recording was still going.
 
-### 3. `ModelLoadingBanner` in the recording overlay
-
-A spinner-banner shown when `status.model != .ready` while a recording is active. Tells the user audio is being captured while the model loads, so the empty live-transcript area doesn't look broken. Especially relevant for keyboard cold-starts where the user has no "model not ready" affordance to prevent the tap.
+#11. **`ModelLoadingBanner` in the recording overlay.** A spinner-banner shown when `status.model != .ready` while a recording is active. Tells the user audio is being captured while the model loads, so the empty live-transcript area doesn't look broken. Especially relevant for keyboard cold-starts where the user has no "model not ready" affordance to prevent the tap.
 
 Copy adapts to state: download percentage during the download phase, "Preparing transcription engine — first launch can take ~25 s" during compile.
 
@@ -78,29 +78,23 @@ Untested because we were offline during the test attempt → the actual error ca
 
 Tiuri sent reference screenshots 2026-05-20. Three distinct pieces of polish to consider:
 
-### 1. Full-screen cold-start landing page (vs our current small pill)
-
-After tapping the keyboard mic, Superwhisper foregrounds with a dark full-screen takeover: phone-illustration with a finger pointing at the bottom bar, big text "Superwhisper is 🟠 on. Swipe to return to the keyboard.", plus a CTA underneath ("You can also install the shortcut to avoid this step in the future"). Way more visual + clear than our `SwipeBackHint` rectangle at the top of the existing recording overlay.
+#12. **Full-screen cold-start landing page (vs our current small pill).** After tapping the keyboard mic, Superwhisper foregrounds with a dark full-screen takeover: phone-illustration with a finger pointing at the bottom bar, big text "Superwhisper is 🟠 on. Swipe to return to the keyboard.", plus a CTA underneath ("You can also install the shortcut to avoid this step in the future"). Way more visual + clear than our `SwipeBackHint` rectangle at the top of the existing recording overlay.
 
 Could lift the existing recording overlay design with a new dedicated `ColdStartTakeover` view that renders ONLY when `launchedViaURL == true` AND `phase == .recording` AND there's no transcript yet — same illustration approach, swap in real `partialSnippet` once it starts arriving.
 
-### 2. Ship a pre-made Shortcut to skip the cold-start dance entirely
-
-Their bundle includes a `.shortcut` file (`Toggle Superwhisper Dictation.shortcut`) — a Shortcuts.app workflow that wraps their `Toggle Recording` AppIntent. Invoking the shortcut from anywhere (Back Tap, Action Button, widget) toggles recording WITHOUT foregrounding the app — bypasses the iOS-26.4 forced foreground entirely.
+#13. **Ship a pre-made Shortcut to skip the cold-start dance entirely.** Their bundle includes a `.shortcut` file (`Toggle Superwhisper Dictation.shortcut`) — a Shortcuts.app workflow that wraps their `Toggle Recording` AppIntent. Invoking the shortcut from anywhere (Back Tap, Action Button, widget) toggles recording WITHOUT foregrounding the app — bypasses the iOS-26.4 forced foreground entirely.
 
 We already have `StartRecordingIntent` + `ToggleRecordingIntent` defined and registered. Users can build this in Shortcuts themselves today; the gap is discoverability + one-tap install.
 
 To match SW: build a `Shhhcribble.shortcut` file in `Shortcuts.app` on Mac wrapping our `ToggleRecordingIntent`, export it, ship inside the app bundle, expose via deep-link button on the cold-start landing page ("Install the shortcut to skip this screen in the future"). The deep link URL is `shortcuts://import-shortcut?url=...&name=Shhhcribble`.
 
-### 3. Stop-button animation + start/stop sound effects
-
-Superwhisper's stop button has a rotating ring around it while recording — confirms visually that the recording is still live. They also play subtle start/end audio cues so the user knows when the recording has begun and ended (especially useful after the foreground dance, where the user is staring at their phone going "did it start?").
+#14. **Stop-button animation + start/stop sound effects.** Superwhisper's stop button has a rotating ring around it while recording — confirms visually that the recording is still live. They also play subtle start/end audio cues so the user knows when the recording has begun and ended (especially useful after the foreground dance, where the user is staring at their phone going "did it start?").
 
 For us: small SF Symbol or shape animation around the Stop button in the recording overlay (rotating circle, pulsing ring, etc.), plus drop `start.caf` and `end.caf`-equivalent audio files in the bundle and play via `AVAudioPlayer` at the start/stop transitions. Both should respect the silent switch.
 
 ---
 
-## First-record-after-install sometimes records but doesn't transcribe
+#15. **First-record-after-install sometimes records but doesn't transcribe.**
 
 **Symptom.** On the very first recording attempt after a fresh install (devicectl or TestFlight), the recording overlay shows the waveform animating (audio is being captured) but the live transcript stays empty / shows "Hello?" or similar near-noise output, and the saved note is empty or near-empty. Cancel, tap play again — works perfectly on second attempt.
 
@@ -120,7 +114,7 @@ Seen 2026-05-19 and 2026-05-20. Reproducible enough to mention to users as a wor
 
 ---
 
-## Live-preview text stability strategy revisit
+#16. **Live-preview text stability strategy revisit.**
 
 **Context.** During recording, `TypingViewModel` (`ShhhcribbleiOS/Features/Recording/RecordingView.swift`) currently uses a four-case hybrid (Tier 6 Step E.2, 2026-05-20): strict prefix → append; normalised prefix → snap in place; small content revision (≤15 char rewind) → honour the rewind; large content revision → reject, with a `rejectionLimit=4` safety valve that force-accepts the next update after 4 consecutive rejections (~2.8 s of staleness max).
 

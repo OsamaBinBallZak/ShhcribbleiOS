@@ -52,6 +52,7 @@
 		D2896EEE392BDFAC6D883C61 /* RecordControlWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */; };
 		D82DDEAA89E30B8359D041B9 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F97F7D751F9F7FFB94986A30 /* KeyboardViewController.swift */; };
 		DE0F38109584DB8B63DE3D06 /* ShhhcribbleShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEFA5C1EC303F6764B041D06 /* ShhhcribbleShortcuts.swift */; };
+		DFB2D9481EFF8C26E43CA284 /* TextEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15EA188457D807C4964BB54A /* TextEngine.swift */; };
 		E0EA78225E4C637B6B14A149 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D583108174E01A3A8E7318A /* StopRecordingIntent.swift */; };
 		E923735934BFE63510C7C276 /* CustomWordsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A507110BACFF08E47FFE2EFC /* CustomWordsView.swift */; };
 		EF43D28C29F6BA8CBE6F8977 /* NoteDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */; };
@@ -129,6 +130,7 @@
 /* Begin PBXFileReference section */
 		0455E8A2F77821C2798406E2 /* NotesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesListView.swift; sourceTree = "<group>"; };
 		07913D96A6F38303729C43F7 /* ShhhcribbleWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShhhcribbleWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		15EA188457D807C4964BB54A /* TextEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextEngine.swift; sourceTree = "<group>"; };
 		1DD50CC8335662AB2606C4D2 /* ShhhcribbleActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleActivityManager.swift; sourceTree = "<group>"; };
 		2015BF4BDACAAEAB1ADBEDA0 /* ShhhcribbleLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShhhcribbleLiveActivity.swift; sourceTree = "<group>"; };
 		226236F0C41379F9E638673C /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
@@ -358,6 +360,7 @@
 				25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */,
 				656869E266D1C8CCF0A5B31B /* NotesRepository.swift */,
 				1DD50CC8335662AB2606C4D2 /* ShhhcribbleActivityManager.swift */,
+				15EA188457D807C4964BB54A /* TextEngine.swift */,
 				3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */,
 			);
 			path = Services;
@@ -625,6 +628,7 @@
 				6375D73C63BE966EE67C623A /* String+Substitutions.swift in Sources */,
 				FC825DC4939F22412C816BCD /* String+TitleGeneration.swift in Sources */,
 				F16617FBF0D0DBD61899D5D9 /* SubstitutionsView.swift in Sources */,
+				DFB2D9481EFF8C26E43CA284 /* TextEngine.swift in Sources */,
 				13A81CB6C2EF070E7847C129 /* ToggleRecordingIntent.swift in Sources */,
 				894BD64061A8B06DB088C20C /* TranscriptionService.swift in Sources */,
 			);
