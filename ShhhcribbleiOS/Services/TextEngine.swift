@@ -163,21 +163,43 @@ actor TextEngine {
 
         await unloadCurrent()
 
-        // Publish download fraction during the .downloading phase; reset to
-        // nil for listing/compiling and on completion, so the play-button ring
-        // only shows real byte transfer.
+        // Publish progress to TranscriptionStatus so NotesEmptyState
+        // can render concrete progress for both the download and the
+        // compile phase. Phase semantics:
+        //   .listing      → both nil (sub-second, not worth showing)
+        //   .downloading  → set modelDownloadProgress, clear compile state
+        //   .compiling(n) → clear download, advance compile step counter
+        //                   if `n` differs from the last seen name
         let progressHandler: DownloadUtils.ProgressHandler = { progress in
             Task { @MainActor in
-                if case .downloading = progress.phase {
-                    TranscriptionStatus.shared.modelDownloadProgress = progress.fractionCompleted
-                } else {
-                    TranscriptionStatus.shared.modelDownloadProgress = nil
+                let status = TranscriptionStatus.shared
+                switch progress.phase {
+                case .downloading:
+                    status.modelDownloadProgress = progress.fractionCompleted
+                    status.modelCompileStep = nil
+                    status.modelCompileName = nil
+                case .compiling(let name):
+                    status.modelDownloadProgress = nil
+                    let cleanName = name.replacingOccurrences(of: ".mlmodelc", with: "")
+                    if status.modelCompileName != cleanName {
+                        status.modelCompileStep = (status.modelCompileStep ?? 0) + 1
+                        status.modelCompileTotal = 4
+                        status.modelCompileName = cleanName
+                    }
+                case .listing:
+                    status.modelDownloadProgress = nil
+                    status.modelCompileStep = nil
+                    status.modelCompileName = nil
                 }
             }
         }
         defer {
             Task { @MainActor in
-                TranscriptionStatus.shared.modelDownloadProgress = nil
+                let status = TranscriptionStatus.shared
+                status.modelDownloadProgress = nil
+                status.modelCompileStep = nil
+                status.modelCompileTotal = nil
+                status.modelCompileName = nil
             }
         }
 

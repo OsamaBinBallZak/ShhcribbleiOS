@@ -27,6 +27,23 @@ final class TranscriptionStatus: ObservableObject {
     /// the play-button progress ring; users only ever see this on a fresh
     /// install or the first time they switch to a not-yet-downloaded engine.
     @Published var modelDownloadProgress: Double?
+    /// 1-indexed step counter during the model-compile phase. Non-nil
+    /// only while FluidAudio is compiling .mlmodelc files (post-download,
+    /// pre-ready). Drives the determinate progress ring in the
+    /// `NotesEmptyState` compiling branch so the user has a concrete
+    /// signal that something is happening — without this, the compile
+    /// phase looks like a blank 25-second hang.
+    @Published var modelCompileStep: Int?
+    /// Expected total number of model files to compile. Currently 4
+    /// (Preprocessor + Encoder + Decoder + JointDecisionv3 for TDT v3).
+    /// Hardcoded — if FluidAudio changes the file layout we'll update.
+    @Published var modelCompileTotal: Int?
+    /// Name of the model currently being compiled (e.g. "Encoder"). Lets
+    /// the UI tell the user which step is in flight; the Encoder model
+    /// is the slow one (~22 s) so calling it out reassures users it's
+    /// not stuck.
+    @Published var modelCompileName: String?
+
     /// Non-nil while a recording is running in append-to-note mode. The
     /// recording overlay reads this to render an "Adding to: <title>" chip
     /// so the user knows the transcript will be appended rather than create
