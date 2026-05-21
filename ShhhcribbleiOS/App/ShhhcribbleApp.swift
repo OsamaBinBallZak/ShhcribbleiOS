@@ -41,16 +41,16 @@ struct ShhhcribbleApp: App {
         // until the user deletes + reinstalls the app. If you see the
         // system "Talk" bar showing, delete the app and reinstall.
         StopRecordingIntent.performer = {
-            await TranscriptionService.shared.stopRecording()
+            await RecordingCoordinator.shared.stopRecording()
         }
         CancelRecordingIntent.performer = {
             // Cancel from the Live Activity currently behaves identically
             // to Stop (commits the recording). Real abort lives in the
-            // in-app Cancel button via TranscriptionService.cancelRecording.
-            await TranscriptionService.shared.stopRecording()
+            // in-app Cancel button via RecordingCoordinator.cancelRecording.
+            await RecordingCoordinator.shared.stopRecording()
         }
         StartRecordingIntent.performer = { @MainActor in
-            let service = TranscriptionService.shared
+            let service = RecordingCoordinator.shared
             let status = TranscriptionStatus.shared
             if status.isRecording {
                 Task.detached { await service.stopRecording() }
@@ -82,7 +82,7 @@ struct ShhhcribbleApp: App {
         // this process without foregrounding the app, so the host app
         // (Notes, Messages, etc.) stays on screen.
         ToggleRecordingIntent.performer = { @MainActor releaseMic in
-            let service = TranscriptionService.shared
+            let service = RecordingCoordinator.shared
             if await service.isRecording {
                 // STOP path. Record timestamp before stop so we can detect
                 // the new transcript landing in App Group.
@@ -117,7 +117,7 @@ struct ShhhcribbleApp: App {
             }
         }
         Task.detached(priority: .userInitiated) {
-            try? await TranscriptionService.shared.ensureModelLoaded()
+            try? await RecordingCoordinator.shared.ensureModelLoaded()
         }
         // Sweep up any Live Activities that survived a prior crash or kill —
         // without this they accumulate as ghost banners across launches.
@@ -185,21 +185,21 @@ struct ShhhcribbleApp: App {
                 print("[Shhhcribble] PTT signal: \(signal.signal.rawValue) at \(signal.at)")
                 switch signal.signal {
                 case .start:
-                    // Direct path: call TranscriptionService.recordAndTranscribe.
+                    // Direct path: call RecordingCoordinator.recordAndTranscribe.
                     // (Earlier this routed through PushToTalkService.beginTransmission
                     // — that service was removed in the S1 cleanup since Superwhisper
                     // doesn't link PT framework either; the entitlement alone gives
                     // background runtime.)
                     Task.detached(priority: .userInitiated) {
                         do {
-                            try await TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)
+                            try await RecordingCoordinator.shared.recordAndTranscribe(trigger: .keyboard)
                         } catch {
                             print("[Shhhcribble] PTT start → recordAndTranscribe failed: \(error)")
                         }
                     }
                 case .stop:
                     Task.detached(priority: .userInitiated) {
-                        await TranscriptionService.shared.stopRecording()
+                        await RecordingCoordinator.shared.stopRecording()
                     }
                 }
             }
@@ -219,7 +219,7 @@ struct ShhhcribbleApp: App {
             print("[Shhhcribble] darwinStart received")
             Task.detached(priority: .userInitiated) {
                 do {
-                    try await TranscriptionService.shared.recordAndTranscribe(trigger: .keyboard)
+                    try await RecordingCoordinator.shared.recordAndTranscribe(trigger: .keyboard)
                 } catch {
                     print("[Shhhcribble] darwinStart -> recordAndTranscribe failed: \(error)")
                 }
@@ -232,7 +232,7 @@ struct ShhhcribbleApp: App {
         ) { _, _, _, _, _ in
             print("[Shhhcribble] darwinStop received")
             Task.detached(priority: .userInitiated) {
-                await TranscriptionService.shared.stopRecording()
+                await RecordingCoordinator.shared.stopRecording()
             }
         }
         print("[Shhhcribble] Darwin observers registered")
@@ -266,7 +266,7 @@ struct ShhhcribbleApp: App {
                     if phase == .background
                         && status.isRecording
                         && status.launchedViaURL {
-                        Task { await TranscriptionService.shared.stopRecording() }
+                        Task { await RecordingCoordinator.shared.stopRecording() }
                     }
                 }
         }
@@ -294,7 +294,7 @@ struct ShhhcribbleApp: App {
             startURLLaunchedRecording(trigger: .keyboard)
         case "stop":
             status.launchedViaURL = true
-            Task { await TranscriptionService.shared.stopRecording() }
+            Task { await RecordingCoordinator.shared.stopRecording() }
         default:
             break
         }
@@ -308,7 +308,7 @@ struct ShhhcribbleApp: App {
         status.launchedViaURL = true
         Task {
             do {
-                try await TranscriptionService.shared.recordAndTranscribe(trigger: trigger)
+                try await RecordingCoordinator.shared.recordAndTranscribe(trigger: trigger)
             } catch {
                 await MainActor.run {
                     if status.phase == .recording { status.setPhase(.idle) }

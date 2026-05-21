@@ -135,7 +135,7 @@ final class AudioInput: @unchecked Sendable {
                 return
             }
             log.notice("Audio interruption .began — stopping recording")
-            Task { await TranscriptionService.shared.stopRecording() }
+            Task { await RecordingCoordinator.shared.stopRecording() }
         case .ended:
             break
         @unknown default:

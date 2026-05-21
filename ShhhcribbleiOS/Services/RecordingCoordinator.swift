@@ -5,12 +5,50 @@ import ShhhcribbleShared
 import UIKit
 import os
 
-private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "service")
+private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "coordinator")
 
+/// Recording lifecycle phase. The state machine is small and flat — three
+/// cases — but the legal transitions are documented + validated via
+/// `canTransition(to:)` so future contributors get an early signal if
+/// they accidentally short-circuit the machine.
+///
+/// Legal transitions:
+///   .idle      → .recording, .error
+///   .recording → .idle, .error
+///   .error     → .idle, .recording
+/// Self-transitions are allowed (no-op).
+///
+/// "No speech detected" is NOT a phase — it surfaces via toast and the
+/// phase collapses to .idle. See `RecordingCoordinator.performRecording`.
 enum RecordingPhase: Equatable {
     case idle
     case recording
     case error(RecordingError)
+
+    /// True if `next` is a legal successor of `self`. Used by
+    /// `TranscriptionStatus.setPhase` to warn on illegal transitions
+    /// without blocking them — the new phase is always applied so the
+    /// UI never gets stuck in an inconsistent state.
+    func canTransition(to next: RecordingPhase) -> Bool {
+        switch (self, next) {
+        // Same-state transitions are always allowed.
+        case (.idle, .idle),
+             (.recording, .recording),
+             (.error, .error):
+            return true
+        // All cross-state transitions among the three phases are
+        // legal. The model is flat by design (CLAUDE.md "Recording
+        // phase state machine"). If a future change adds a phase
+        // like `.transcribing` or `.saving`, update this graph.
+        case (.idle, .recording),
+             (.idle, .error),
+             (.recording, .idle),
+             (.recording, .error),
+             (.error, .idle),
+             (.error, .recording):
+            return true
+        }
+    }
 }
 
 enum RecordingError: Equatable {
@@ -38,73 +76,21 @@ enum RecordingError: Equatable {
 // the enum + the corresponding branches in loadModel / performRecording /
 // stopRecording (see git history pre-2026-05-20).
 
-@MainActor
-final class TranscriptionStatus: ObservableObject {
-    static let shared = TranscriptionStatus()
-    @Published var model: ModelStatus = .notLoaded
-    @Published var lastEvent: String = ""
-    @Published var phase: RecordingPhase = .idle
-    @Published var partialSnippet: String = ""
-    @Published var launchedViaURL: Bool = false
-    /// Smoothed mic input level, 0...1, for visualizers.
-    @Published var audioLevel: Double = 0
-    /// Fraction (0...1) of the current first-time model download.
-    /// Non-nil only while FluidAudio is actively downloading bytes — nil
-    /// during listing, compiling, and after the model is cached. Drives
-    /// the play-button progress ring; users only ever see this on a fresh
-    /// install or the first time they switch to a not-yet-downloaded engine.
-    @Published var modelDownloadProgress: Double?
-    /// Non-nil while a recording is running in append-to-note mode. The
-    /// recording overlay reads this to render an "Adding to: <title>" chip
-    /// so the user knows the transcript will be appended rather than create
-    /// a fresh note. Cleared on every terminal state.
-    @Published var appendTargetTitle: String?
-    /// True when the audio engine is running but no buffers have arrived
-    /// for the staleness threshold (~1.5 s). Most common cause: AirPods
-    /// held by another device (Mac via Continuity), or the user pulled
-    /// the AirPods just as recording started. Set by AudioInput's
-    /// watchdog timer; the recording overlay reads this and renders a
-    /// "Waiting for audio device…" banner so the user understands why
-    /// the waveform isn't moving.
-    @Published var audioDeviceUnavailable: Bool = false
-
-    /// Single source of truth derives from `phase`. Existing call sites that
-    /// only need to know "is the engine actively capturing audio" keep
-    /// reading this without caring about the new error/noSpeech states.
-    var isRecording: Bool { phase == .recording }
-
-    /// True whenever the recording overlay should be visible — i.e. anything
-    /// other than fully idle. Used by the overlay's visibility guard.
-    var overlayVisible: Bool { phase != .idle }
-
-    private init() {}
-
-    func set(_ status: ModelStatus) { self.model = status }
-    func event(_ text: String) {
-        print("[Shhhcribble] \(text)")
-        self.lastEvent = text
-    }
-
-    func setPhase(_ newPhase: RecordingPhase) {
-        phase = newPhase
-    }
-}
-
-/// `TranscriptionService` is the recording-lifecycle coordinator. It runs
+/// `RecordingCoordinator` is the recording-lifecycle coordinator. It runs
 /// the phase state machine and orchestrates the upstream `AudioInput` and
 /// the downstream `TextEngine`. On stop it commits to SwiftData, writes
 /// the transcript to the clipboard, hands off to the keyboard via the App
 /// Group, schedules warm-mode idle expiry, and clears the Live Activity.
 ///
-/// Recording flow (since Step 2): consume `AudioInput.shared.start(...)`
-/// as a `for await buffer in stream` loop, feeding each buffer into
+/// Recording flow: consume `AudioInput.shared.start(...)` as a
+/// `for await buffer in stream` loop, feeding each buffer into
 /// `TextEngine.shared.feed`. The stream finishes when `stopRecording` or
 /// `cancelRecording` calls `AudioInput.stop()` / `AudioInput.cancel()`.
 /// The loop exits naturally; the post-loop block branches on the
 /// `cancelled` flag to either discard (cancel path) or finalize +
 /// commit (stop path). No `CheckedContinuation` needed.
-actor TranscriptionService {
-    static let shared = TranscriptionService()
+actor RecordingCoordinator {
+    static let shared = RecordingCoordinator()
 
     private var recording = false
     private var stopRequested = false
@@ -334,7 +320,7 @@ actor TranscriptionService {
         let taskId = await MainActor.run {
             UIApplication.shared.beginBackgroundTask(withName: "Shhhcribble.transcribe") {
                 // Expiration — iOS is about to kill us. Force-stop.
-                Task { await TranscriptionService.shared.forceEndBackgroundTask() }
+                Task { await RecordingCoordinator.shared.forceEndBackgroundTask() }
             }
         }
         self.bgTaskId = taskId
@@ -352,8 +338,8 @@ actor TranscriptionService {
             self.bgTaskId = .invalid
             Task { @MainActor in
                 // Only collapse to .idle if we're still mid-recording; if a
-                // branch already moved us to .noSpeech or .error, leave that
-                // state visible so the overlay can render the error UX.
+                // branch already moved us to an error state, leave that
+                // visible so the overlay can render the error UX.
                 if TranscriptionStatus.shared.phase == .recording {
                     TranscriptionStatus.shared.setPhase(.idle)
                 }
@@ -433,7 +419,7 @@ actor TranscriptionService {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(Self.tdtLiveInterval * 1_000_000_000))
                 if Task.isCancelled { break }
-                await TranscriptionService.shared.performLiveSnapshot()
+                await RecordingCoordinator.shared.performLiveSnapshot()
             }
         }
         self.tdtLiveTask = live

@@ -116,11 +116,11 @@ struct RecordingOverlayView: View {
     }
 
     private func stop() {
-        Task { await TranscriptionService.shared.stopRecording() }
+        Task { await RecordingCoordinator.shared.stopRecording() }
     }
 
     private func cancel() {
-        Task { await TranscriptionService.shared.cancelRecording() }
+        Task { await RecordingCoordinator.shared.cancelRecording() }
     }
 }
 
@@ -331,7 +331,7 @@ private struct RetryButton: View {
         Button {
             reloading = true
             Task {
-                await TranscriptionService.shared.reloadModel()
+                await RecordingCoordinator.shared.reloadModel()
                 await MainActor.run {
                     reloading = false
                     onComplete()

@@ -8,7 +8,7 @@ private let diagLog = Logger(subsystem: "com.shhhcribble.diag", category: "engin
 
 // Model status lives here — it's a transcription-engine concern, not a
 // recording-lifecycle one. `RecordingPhase` / `RecordingError` stay next to
-// `TranscriptionService` (the coordinator-in-disguise).
+// `RecordingCoordinator`.
 enum ModelStatus: Equatable {
     case notLoaded
     case loading
@@ -147,7 +147,7 @@ actor TextEngine {
     }
 
     /// Force-unload and reload. Caller is responsible for ensuring no
-    /// recording is in flight (see `TranscriptionService.reloadModel`).
+    /// recording is in flight (see `RecordingCoordinator.reloadModel`).
     func reload() async {
         await unloadCurrent()
         loadTask = nil
@@ -376,7 +376,7 @@ actor TextEngine {
 
     /// Fuse the filler-word filter and substitution pass into a single
     /// call. Replaces three duplicated invocation sites in the old
-    /// `TranscriptionService`. Ordering is filter-then-substitute so
+    /// `RecordingCoordinator`. Ordering is filter-then-substitute so
     /// substitutions don't get stripped by the filler regex.
     private func applyVocabulary(_ text: String) -> String {
         let filterOn = UserDefaults.standard.object(forKey: "filterFillerWords") as? Bool ?? true

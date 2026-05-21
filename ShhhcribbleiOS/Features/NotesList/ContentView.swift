@@ -154,7 +154,7 @@ private struct ContinueRecordingButton: View {
 
     private func start() {
         Task {
-            try? await TranscriptionService.shared.recordAndTranscribe(
+            try? await RecordingCoordinator.shared.recordAndTranscribe(
                 trigger: .manual,
                 appendingTo: noteId
             )
@@ -216,7 +216,7 @@ private struct StartRecordingButton: View {
     }
 
     private func start() {
-        Task { try? await TranscriptionService.shared.recordAndTranscribe() }
+        Task { try? await RecordingCoordinator.shared.recordAndTranscribe() }
     }
 }
 

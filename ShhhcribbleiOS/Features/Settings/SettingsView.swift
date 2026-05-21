@@ -148,7 +148,7 @@ struct SettingsView: View {
         Section {
             Toggle("Use Neural Engine", isOn: $useANE)
                 .onChange(of: useANE) { _, _ in
-                    Task { await TranscriptionService.shared.reloadModel() }
+                    Task { await RecordingCoordinator.shared.reloadModel() }
                 }
         } header: {
             Text("Performance")

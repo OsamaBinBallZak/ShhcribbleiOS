@@ -15,6 +15,7 @@
 		181A81091C8A4187821BC287 /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		1BDCAA44C32853FE8EBA56E9 /* Note.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4BB3787641C3AEA5939B72 /* Note.swift */; };
 		1CF7B95C1AF267E26C793831 /* NotesRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 656869E266D1C8CCF0A5B31B /* NotesRepository.swift */; };
+		231373AFC305D4622CAC387B /* RecordingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3285FC762014ADE25EAD76FB /* RecordingCoordinator.swift */; };
 		239F705F50711D4DFD4AF893 /* String+Filters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC7CD9084CEFD0BC71D09EF /* String+Filters.swift */; };
 		25F3B3ACE6D69DB37CDA755F /* CancelRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */; };
 		3274E60B92976B14A622E23B /* String+Markdown.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A5CFFCA2877D0747EE8059C /* String+Markdown.swift */; };
@@ -32,8 +33,8 @@
 		7F7E72E500EF1FBCB19F272B /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		8296F9A45D14F85C84C36697 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF932B842F1D3FF7670E760F /* Assets.xcassets */; };
 		82D25E7788D3FA316053B15D /* KeyboardRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FC191D0172714C04A3D24F /* KeyboardRootView.swift */; };
+		86CAAF65B9173EAE9BEACBF9 /* TranscriptionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD8483BEFD4DE0B5E7400C5E /* TranscriptionStatus.swift */; };
 		87B5F71EBE470C60CE651AE7 /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
-		894BD64061A8B06DB088C20C /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */; };
 		8B2AB72AD46FC20682EE9EB3 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E35F65B3A78E3990E7794AE /* OnboardingView.swift */; };
 		8BABE71CB500B03E180CD138 /* ShhhcribbleShared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		8DB2514900940BDCD6CD53C8 /* ShhhcribbleLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2015BF4BDACAAEAB1ADBEDA0 /* ShhhcribbleLiveActivity.swift */; };
@@ -134,8 +135,8 @@
 		226236F0C41379F9E638673C /* NoteDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailView.swift; sourceTree = "<group>"; };
 		25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardService.swift; sourceTree = "<group>"; };
 		3084FA0CA020E42C4A01DE8E /* SubstitutionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubstitutionsView.swift; sourceTree = "<group>"; };
+		3285FC762014ADE25EAD76FB /* RecordingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCoordinator.swift; sourceTree = "<group>"; };
 		33E79AE43F43AB9D65224F4F /* NoteDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteDetailViewModel.swift; sourceTree = "<group>"; };
-		3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
 		40914B36D9B86D9FF4236C8A /* AudioInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioInput.swift; sourceTree = "<group>"; };
 		40EADE381F8C5CA4D22D073D /* OpenURLCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenURLCapture.swift; sourceTree = "<group>"; };
 		46298A8DEB58641B112F4AF6 /* RecordControlWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordControlWidget.swift; sourceTree = "<group>"; };
@@ -159,6 +160,7 @@
 		AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancelRecordingIntent.swift; sourceTree = "<group>"; };
 		BF932B842F1D3FF7670E760F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		CD8483BEFD4DE0B5E7400C5E /* TranscriptionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionStatus.swift; sourceTree = "<group>"; };
 		CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackListView.swift; sourceTree = "<group>"; };
 		D7EE9617C3C7A0932795E033 /* FillerWordsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FillerWordsView.swift; sourceTree = "<group>"; };
 		D9B54907BD89721546007451 /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
@@ -353,9 +355,10 @@
 				40914B36D9B86D9FF4236C8A /* AudioInput.swift */,
 				25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */,
 				656869E266D1C8CCF0A5B31B /* NotesRepository.swift */,
+				3285FC762014ADE25EAD76FB /* RecordingCoordinator.swift */,
 				1DD50CC8335662AB2606C4D2 /* ShhhcribbleActivityManager.swift */,
 				15EA188457D807C4964BB54A /* TextEngine.swift */,
-				3641C5BDC999F0CE55ED22CB /* TranscriptionService.swift */,
+				CD8483BEFD4DE0B5E7400C5E /* TranscriptionStatus.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -608,6 +611,7 @@
 				32EF336E4F1238643CD62402 /* NotesListView.swift in Sources */,
 				1CF7B95C1AF267E26C793831 /* NotesRepository.swift in Sources */,
 				8B2AB72AD46FC20682EE9EB3 /* OnboardingView.swift in Sources */,
+				231373AFC305D4622CAC387B /* RecordingCoordinator.swift in Sources */,
 				5C09F93FEB042D216EA310B5 /* RecordingView.swift in Sources */,
 				39709EDB971E5B5F478230AA /* SettingsView.swift in Sources */,
 				0DD1EB5203E3565C4328AA54 /* ShhhcribbleActivityManager.swift in Sources */,
@@ -622,7 +626,7 @@
 				F16617FBF0D0DBD61899D5D9 /* SubstitutionsView.swift in Sources */,
 				DFB2D9481EFF8C26E43CA284 /* TextEngine.swift in Sources */,
 				13A81CB6C2EF070E7847C129 /* ToggleRecordingIntent.swift in Sources */,
-				894BD64061A8B06DB088C20C /* TranscriptionService.swift in Sources */,
+				86CAAF65B9173EAE9BEACBF9 /* TranscriptionStatus.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
