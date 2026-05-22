@@ -6,11 +6,24 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ## Keyboard pill redesign WIP — 2026-05-21
 
-#20. **Gray bar above the keyboard pill is still too tall (Tiuri).** Sprint 8 keyboard redesign shipped a 38pt dark pill (down from 48pt) but the iOS keyboard surface area above the pill is taller than the pill itself — the gray "wraps" the pill on the sides but extends far higher on the top. Two attempts to fix:
-- Attempt 1: `.padding(4)` all around the pill inside `ShhhcribbleToolbar`, remove the outer VStack's `.padding(.top, 4)`. No visible change on device.
-- Attempt 2: render `ShhhcribbleToolbar` inside KeyboardKit's `KeyboardView(toolbar: { _ in ... })` slot instead of in our own VStack. Also no visible change.
+#20. **Gray space above the keyboard pill varies by host app (Tiuri).** Sprint 8 keyboard redesign shipped a 38pt grey pill but the keyboard surface area above the pill renders differently depending on which app is showing the keyboard:
 
-Suspect: iOS reserves a minimum keyboard-toolbar inset above any custom keyboard, OR KeyboardKit's `toolbar:` slot has a fixed minimum height that ignores its content size, OR the safe-area inset is being applied invisibly. Need to inspect KeyboardKit's KeyboardView internals (`Sources/KeyboardKit/...`) for the toolbar slot height, then either override it or use a different layout API.
+- **WhatsApp**: gray wraps the pill tightly — ~4pt visible above, sides, and below. Looks correct.
+- **Notes**: gray extends ~20pt above the pill before the pill starts. Looks wrong / wastes space.
+
+Two attempts to fix from our side, both no-op on device:
+- Attempt 1: `.padding(4)` all around the pill inside `ShhhcribbleToolbar`, remove the outer VStack's `.padding(.top, 4)`.
+- Attempt 2: render `ShhhcribbleToolbar` inside KeyboardKit's `KeyboardView(toolbar: { _ in ... })` slot instead of in our own VStack.
+
+**Diagnosis (2026-05-22):** the gray strip above the pill in Notes is iOS's own reserved space, NOT part of our keyboard view. Notes' rich-text editor declares `autocorrectionType = .yes` (and possibly `inlinePredictionType` on iOS 17+) which triggers iOS to reserve a "predictive text bar" inset above any custom keyboard. WhatsApp's chat input either has autocorrect off or uses a simpler input config that doesn't trigger the inset.
+
+Since the inset is iOS-controlled and outside our keyboard's draw region, we can't shrink it from our side without breaking other text fields. **Three real options for future work:**
+
+1. **Accept** (current decision). The pill is visually fine within its own region; the gray above is iOS's autocorrect-bar space, owned by the host app. Document and move on.
+2. **Fill the strip with useful content** — render our own row INTO that space (something like predictive completions, or a live transcript overflow line during recording). Means we'd have to opt into autocorrect declaration on our keyboard side and implement candidate UI ourselves. Worth ~2 hours of investigation if/when we want to make Notes feel as clean as WhatsApp.
+3. **Investigate Info.plist keys** like `PrefersTextInputContextIdentifier` or extension entitlements to opt OUT of the strip reservation. Risky and likely a dead end; Apple doesn't expose a documented way to refuse the autocorrect bar.
+
+For now we accept. Picked up someday → option 2 most likely.
 
 #21. **Auto-paste from keyboard mic + stop is broken (Tiuri, 2026-05-21).** Tied to FB-2 — the recording-state desync. When user taps the keyboard pill's mic button and the main app foregrounds with the broken overlay, they can't tap stop, so the transcript never gets to `commit()` and `KeyboardBridge.writeTranscript` never fires. Net result: no auto-paste. Will resolve when #2 is fixed.
 

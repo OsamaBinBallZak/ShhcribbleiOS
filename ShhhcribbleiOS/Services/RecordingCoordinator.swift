@@ -130,6 +130,38 @@ actor RecordingCoordinator {
         try await TextEngine.shared.ensureLoaded()
     }
 
+    /// Fix A (backlog #2): the keyboard fires THREE simultaneous start
+    /// signals on a single mic-tap — Darwin notification, App Group PTT
+    /// signal, and a `shhhcribble://keyboard` URL open. All three race
+    /// into the main app's observers (`registerKeyboardDarwinObservers`,
+    /// `startKeyboardSignalPolling`, `.onOpenURL`). The actor guard at
+    /// the top of `recordAndTranscribe` dedupes the BODY, but each
+    /// caller's wrapping `Task.detached` carries its own cancel
+    /// capability, and the desync bug shows that even idempotent calls
+    /// can race in subtle ways during init.
+    ///
+    /// This wrapper debounces the keyboard start signals at the entry
+    /// point with a 250 ms window. First signal in the window proceeds
+    /// to `recordAndTranscribe`; subsequent signals are no-ops. The
+    /// timestamp is NOT reset on completion — it's only consulted as a
+    /// "did we just see a keyboard start" check, so a recording starting
+    /// 250 ms after the last one is allowed.
+    private var lastKeyboardStartAt: Date?
+    private static let keyboardStartDebounceWindow: TimeInterval = 0.25
+
+    /// Single entry point for ALL keyboard-triggered start signals.
+    /// Routes Darwin / PTT / URL paths through one debouncer.
+    func keyboardRecordAndTranscribe() async throws {
+        let now = Date()
+        if let last = lastKeyboardStartAt,
+           now.timeIntervalSince(last) < Self.keyboardStartDebounceWindow {
+            await TranscriptionStatus.shared.event("Keyboard start deduped (within \(Self.keyboardStartDebounceWindow)s window)")
+            return
+        }
+        lastKeyboardStartAt = now
+        try await recordAndTranscribe(trigger: .keyboard)
+    }
+
     func reloadModel() async {
         guard !recording else {
             await TranscriptionStatus.shared.event("Can't reload while recording")
@@ -214,6 +246,21 @@ actor RecordingCoordinator {
             try await task.value
         } catch is CancellationError {
             await TranscriptionStatus.shared.event("Recording task cancelled via Task.cancel()")
+            // Fix C (backlog #2): belt-and-braces cleanup. With Fix B the
+            // hoisted `defer` inside `performRecording` should already
+            // have reset state when the task cancelled. This explicit
+            // reset covers the edge case where cancel landed before
+            // `recording = true` was assigned (defer not yet registered),
+            // and any future refactor that might re-introduce the gap.
+            if recording {
+                recording = false
+                stopRequested = false
+                await MainActor.run {
+                    if TranscriptionStatus.shared.phase == .recording {
+                        TranscriptionStatus.shared.setPhase(.idle)
+                    }
+                }
+            }
         }
     }
 
@@ -232,6 +279,39 @@ actor RecordingCoordinator {
         recording = true
         stopRequested = false
         cancelled = false
+
+        // Fix B (backlog #2): defer block registered BEFORE the first
+        // cancellable await/checkCancellation. Earlier this block lived
+        // ~100 lines down (post-setUIRecording) so any `Task.cancel()`
+        // from a duplicate stop signal during init would throw past the
+        // cleanup, leaving `recording = true` and `phase = .recording`
+        // permanently stuck. With the defer up here, ANY exit path —
+        // cancellation, error, mid-init bail — cleans up actor state.
+        defer {
+            recording = false
+            stopRequested = false
+            appendTargetId = nil
+            let endId = self.bgTaskId
+            self.bgTaskId = .invalid
+            Task { @MainActor in
+                // Only collapse to .idle if we're still mid-recording; if a
+                // branch already moved us to an error state, leave that
+                // visible so the overlay can render the error UX.
+                if TranscriptionStatus.shared.phase == .recording {
+                    TranscriptionStatus.shared.setPhase(.idle)
+                }
+                TranscriptionStatus.shared.appendTargetTitle = nil
+                if endId != .invalid {
+                    UIApplication.shared.endBackgroundTask(endId)
+                }
+            }
+            Task { @MainActor in
+                ShhhcribbleActivityManager.shared.end()
+            }
+            // Clear live-stream data so the keyboard pill doesn't show
+            // a stale waveform/transcript next time it appears.
+            KeyboardBridge.clearLiveStreams()
+        }
 
         try Task.checkCancellation()
 
@@ -330,31 +410,7 @@ actor RecordingCoordinator {
         if !activityOK {
             await TranscriptionStatus.shared.event("Live Activity unavailable — continuing without it")
         }
-        defer {
-            recording = false
-            stopRequested = false
-            appendTargetId = nil
-            let endId = self.bgTaskId
-            self.bgTaskId = .invalid
-            Task { @MainActor in
-                // Only collapse to .idle if we're still mid-recording; if a
-                // branch already moved us to an error state, leave that
-                // visible so the overlay can render the error UX.
-                if TranscriptionStatus.shared.phase == .recording {
-                    TranscriptionStatus.shared.setPhase(.idle)
-                }
-                TranscriptionStatus.shared.appendTargetTitle = nil
-                if endId != .invalid {
-                    UIApplication.shared.endBackgroundTask(endId)
-                }
-            }
-            Task { @MainActor in
-                ShhhcribbleActivityManager.shared.end()
-            }
-            // Clear live-stream data so the keyboard pill doesn't show
-            // a stale waveform/transcript next time it appears.
-            KeyboardBridge.clearLiveStreams()
-        }
+        // (defer block was here pre-fix; hoisted to top — see Fix B comment.)
 
         async let modelReady: Void = TextEngine.shared.ensureLoaded()
 

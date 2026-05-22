@@ -121,8 +121,16 @@ final class KeyboardViewController: KeyboardInputViewController {
     }
 
     private func startPolling() {
+        // 100 ms polling so the keyboard pill's audio bars + live
+        // transcript actually animate. The main app writes liveAudioLevel
+        // to the App Group at ~10 Hz throttled (see RecordingCoordinator
+        // performRecording onLevel callback); polling at the same cadence
+        // means the keyboard's reads keep up with the writes.
+        //
+        // Negligible perf cost — UserDefaults reads are fast, the work
+        // per tick is a couple of value reads + maybe a transcript pop.
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.toolbarState.refresh()
             self.consumeAndInsertTranscriptIfReady()

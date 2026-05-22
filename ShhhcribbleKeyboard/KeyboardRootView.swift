@@ -77,7 +77,6 @@ private struct ShhhcribblePill: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            leadingMic
             if state.isRecordingActive {
                 audioBars
             }
@@ -85,7 +84,10 @@ private struct ShhhcribblePill: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             trailingAction
         }
-        .padding(.leading, 10)   // mic icon center at 19pt → concentric w/ left rounded end
+        // No leading mic icon — the right-side action button already
+        // carries a mic glyph when idle (and a stop square when
+        // recording). Two mic icons on a 38pt pill was redundant.
+        .padding(.leading, 16)
         .frame(height: Self.pillHeight)
         .background(
             RoundedRectangle(cornerRadius: Self.pillHeight / 2, style: .continuous)
@@ -95,21 +97,20 @@ private struct ShhhcribblePill: View {
 
     // MARK: Pieces
 
-    private var leadingMic: some View {
-        Image(systemName: state.isRecordingActive ? "mic.circle.fill" : "mic.fill")
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(leadingMicColor)
-            .frame(width: 18, height: 18)
-    }
-
     private var audioBars: some View {
         // Five vertical bars, heights modulated by liveAudioLevel.
         // Each bar gets a slightly different scaling so the cluster
         // looks like a waveform rather than five identical sticks.
+        //
+        // Sensitivity: AudioInput already scales RMS by 12× to map
+        // normal speech to ~1.0, but for the small keyboard pill that
+        // signal looks too flat. Boost by another 1.8× (clamped to 1.0)
+        // so even quieter speech drives visible movement.
         HStack(spacing: 2) {
             ForEach(0..<5, id: \.self) { i in
                 let factor: Double = [0.4, 0.85, 1.0, 0.6, 0.3][i]
-                let height = max(3, state.liveAudioLevel * 22 * factor)
+                let amplified = min(1.0, state.liveAudioLevel * 2.5)
+                let height = max(3, amplified * 22 * factor)
                 Capsule()
                     .fill(Color.red)
                     .frame(width: 2, height: CGFloat(height))
@@ -206,23 +207,29 @@ private struct ShhhcribblePill: View {
     // MARK: Style helpers
 
     private var pillBackground: Color {
+        // Light grey — close to the keyboard's own surface but just
+        // a touch darker so the pill is still distinguishable. The
+        // previous medium-grey read as "in your face" against the
+        // light keyboard tone (Tiuri, 2026-05-22). Tracks roughly the
+        // tone between system-gray and the keyboard background.
         if state.isRecordingActive {
-            return Color(red: 0.17, green: 0.10, blue: 0.11)  // dark red-tinted
+            // Faint warm tint during recording. Subtle enough that
+            // it's not jarring, perceptible enough to read as "in
+            // recording mode" alongside the red stop button.
+            return Color(red: 0.74, green: 0.69, blue: 0.71)
         }
-        return Color(red: 0.11, green: 0.11, blue: 0.12)       // #1c1c1e-ish
-    }
-
-    private var leadingMicColor: Color {
-        if state.isRecordingActive { return .red }
-        if state.engineWarm { return .accentColor }
-        return .white.opacity(0.45)
+        return Color(red: 0.72, green: 0.72, blue: 0.74)
     }
 
     private var statusColor: Color {
+        // Dark text against the new light-grey pill background. Live
+        // transcript gets full primary weight; placeholder/status copy
+        // ("Tap to dictate" / "Ready" / "Listening…") gets a softer
+        // secondary tone so it doesn't compete with the action button.
         if state.isRecordingActive && !state.livePartial.isEmpty {
-            return .white.opacity(0.92)
+            return Color.black.opacity(0.85)
         }
-        return .white.opacity(0.55)
+        return Color.black.opacity(0.55)
     }
 
     private var statusString: String {

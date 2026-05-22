@@ -107,8 +107,9 @@ struct ShhhcribbleApp: App {
             } else {
                 // START path. Fire-and-forget the recording so perform()
                 // returns immediately (the user will tap mic again to stop).
+                // Fix A (backlog #2): deduped entry.
                 Task.detached(priority: .userInitiated) {
-                    try? await service.recordAndTranscribe(trigger: .keyboard)
+                    try? await service.keyboardRecordAndTranscribe()
                 }
                 // Brief pause so a fast double-tap doesn't race the
                 // recording-flag claim inside performRecording.
@@ -190,11 +191,14 @@ struct ShhhcribbleApp: App {
                     // — that service was removed in the S1 cleanup since Superwhisper
                     // doesn't link PT framework either; the entitlement alone gives
                     // background runtime.)
+                    // Fix A (backlog #2): route through the deduped
+                    // keyboard entry. Darwin + PTT + URL race; dedupe lives
+                    // in RecordingCoordinator's 250ms window.
                     Task.detached(priority: .userInitiated) {
                         do {
-                            try await RecordingCoordinator.shared.recordAndTranscribe(trigger: .keyboard)
+                            try await RecordingCoordinator.shared.keyboardRecordAndTranscribe()
                         } catch {
-                            print("[Shhhcribble] PTT start → recordAndTranscribe failed: \(error)")
+                            print("[Shhhcribble] PTT start → keyboardRecordAndTranscribe failed: \(error)")
                         }
                     }
                 case .stop:
@@ -217,11 +221,12 @@ struct ShhhcribbleApp: App {
             observer: UnsafeRawPointer(token)
         ) { _, _, _, _, _ in
             print("[Shhhcribble] darwinStart received")
+            // Fix A (backlog #2): deduped entry, see keyboardRecordAndTranscribe.
             Task.detached(priority: .userInitiated) {
                 do {
-                    try await RecordingCoordinator.shared.recordAndTranscribe(trigger: .keyboard)
+                    try await RecordingCoordinator.shared.keyboardRecordAndTranscribe()
                 } catch {
-                    print("[Shhhcribble] darwinStart -> recordAndTranscribe failed: \(error)")
+                    print("[Shhhcribble] darwinStart -> keyboardRecordAndTranscribe failed: \(error)")
                 }
             }
         }
@@ -308,7 +313,15 @@ struct ShhhcribbleApp: App {
         status.launchedViaURL = true
         Task {
             do {
-                try await RecordingCoordinator.shared.recordAndTranscribe(trigger: trigger)
+                // Fix A (backlog #2): keyboard-trigger URLs go through the
+                // deduped entry so this doesn't race the Darwin + PTT
+                // signals that arrived in parallel. Other triggers
+                // (.manual etc.) use the direct path — they don't fan-out.
+                if trigger == .keyboard {
+                    try await RecordingCoordinator.shared.keyboardRecordAndTranscribe()
+                } else {
+                    try await RecordingCoordinator.shared.recordAndTranscribe(trigger: trigger)
+                }
             } catch {
                 await MainActor.run {
                     if status.phase == .recording { status.setPhase(.idle) }
