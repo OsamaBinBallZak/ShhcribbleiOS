@@ -394,7 +394,28 @@ final class AudioInput: @unchecked Sendable {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
-        print("[Shhhcribble] AudioInput (private) input format: sampleRate=\(format.sampleRate) channels=\(format.channelCount)")
+        log.notice("installPrivateEngine: input format sampleRate=\(format.sampleRate, privacy: .public) channels=\(format.channelCount, privacy: .public)")
+
+        // Format-validity guard mirroring `startWarmEngine`. Without this,
+        // `inputNode.installTap` raises an uncatchable Obj-C NSException
+        // (`IsFormatSampleRateAndChannelCountValid(format)`) when the
+        // audio route is in a transient state — most commonly when the
+        // process was woken in background to service an AppIntent and
+        // hasn't been granted full audio access yet. The crash report
+        // shows up as SIGABRT in `AUGraphNodeBaseV3::CreateRecordingTap`.
+        // Throw a real Swift error here so the caller can surface a
+        // RecordingError UX instead of taking the whole app down.
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            log.error("installPrivateEngine: invalid input format (sr=\(format.sampleRate, privacy: .public), ch=\(format.channelCount, privacy: .public)) — audio session likely not active in current context (e.g. background AppIntent without foregrounding)")
+            throw NSError(
+                domain: "com.shhhcribble.audio",
+                code: -1001,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Audio input unavailable. The app may need to be open before recording can start from a Shortcut."
+                ]
+            )
+        }
+
         var bufferCount = 0
         inputNode.installTap(onBus: 0, bufferSize: 0, format: format) { [weak self] buffer, _ in
             guard let self else { return }

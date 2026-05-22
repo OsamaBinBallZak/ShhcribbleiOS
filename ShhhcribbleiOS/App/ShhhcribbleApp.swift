@@ -268,9 +268,16 @@ struct ShhhcribbleApp: App {
                     // of background audio + the Live Activity. The user stops
                     // via the Live Activity's Stop button or by returning to
                     // the app.
+                    //
+                    // Exception: keyboard cold-starts set
+                    // `launchedFromKeyboard`. The swipe-back hint (and the
+                    // Step-4 takeover view) tell the user to swipe right
+                    // to return to the keyboard while recording continues
+                    // — auto-stopping would directly contradict that.
                     if phase == .background
                         && status.isRecording
-                        && status.launchedViaURL {
+                        && status.launchedViaURL
+                        && !status.launchedFromKeyboard {
                         Task { await RecordingCoordinator.shared.stopRecording() }
                     }
                 }
@@ -311,6 +318,10 @@ struct ShhhcribbleApp: App {
         // the actor hop inside recordAndTranscribe can update it.
         status.setPhase(.recording)
         status.launchedViaURL = true
+        // Keyboard cold-start gets a sub-flag so the scene-phase observer
+        // doesn't auto-stop on swipe-back. See the .onChange(of: scenePhase)
+        // guard above.
+        status.launchedFromKeyboard = (trigger == .keyboard)
         Task {
             do {
                 // Fix A (backlog #2): keyboard-trigger URLs go through the
@@ -326,6 +337,7 @@ struct ShhhcribbleApp: App {
                 await MainActor.run {
                     if status.phase == .recording { status.setPhase(.idle) }
                     status.launchedViaURL = false
+                    status.launchedFromKeyboard = false
                 }
             }
         }

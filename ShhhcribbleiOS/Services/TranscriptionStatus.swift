@@ -19,6 +19,15 @@ final class TranscriptionStatus: ObservableObject {
     @Published var phase: RecordingPhase = .idle
     @Published var partialSnippet: String = ""
     @Published var launchedViaURL: Bool = false
+    /// Subset of `launchedViaURL`: true ONLY when the URL launch came from
+    /// the keyboard cold-start path (`shhhcribble://keyboard`). Used by the
+    /// scene-phase observer in `ShhhcribbleApp` to suppress its auto-stop
+    /// behaviour. Without this flag, swiping back to the keyboard
+    /// mid-recording would background the app and the URL-launched guard
+    /// would terminate the recording — directly contradicting the
+    /// swipe-back hint instruction to swipe back while recording continues.
+    /// Reset everywhere `launchedViaURL` is reset.
+    @Published var launchedFromKeyboard: Bool = false
     /// Smoothed mic input level, 0...1, for visualizers.
     @Published var audioLevel: Double = 0
     /// Fraction (0...1) of the current first-time model download.

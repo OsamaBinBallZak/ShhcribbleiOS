@@ -23,9 +23,22 @@ struct RecordingOverlayView: View {
     private var phaseContent: some View {
         switch status.phase {
         case .recording:
-            recordingContent
+            // Keyboard cold-start gets a dedicated takeover view, but only
+            // until the first partial transcript arrives. Once we have text,
+            // collapse to the normal recording overlay so the user can read
+            // what they're saying.
+            if status.launchedFromKeyboard && status.partialSnippet.isEmpty {
+                ColdStartTakeover(
+                    audioLevel: status.audioLevel,
+                    onCancel: cancel
+                )
                 .onAppear { startTimer() }
                 .onDisappear { stopTimer() }
+            } else {
+                recordingContent
+                    .onAppear { startTimer() }
+                    .onDisappear { stopTimer() }
+            }
         case .error(let err):
             ErrorCard(error: err)
         case .idle:
@@ -184,6 +197,122 @@ private struct SwipeBackHint: View {
     }
 }
 
+/// Full-screen cold-start landing page for keyboard-triggered recordings.
+/// Shown when `launchedFromKeyboard == true && phase == .recording &&
+/// partialSnippet.isEmpty` — i.e. the user just tapped the keyboard mic,
+/// the app foregrounded, but no transcript has arrived yet. As soon as
+/// the first partial lands, the overlay collapses to the normal
+/// `recordingContent` so the live text is visible.
+///
+/// Inspired by Superwhisper iOS's cold-start screen (per
+/// SUPERWHISPER_RE.md). Replaces the small `SwipeBackHint` rectangle for
+/// the keyboard case specifically; non-keyboard URL launches
+/// (Back-Tap / Shortcut → `.manual`) still render `SwipeBackHint` inside
+/// `recordingContent` because they have different "back-pill commits"
+/// semantics.
+private struct ColdStartTakeover: View {
+    let audioLevel: Double
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer()
+
+            // Phone illustration with an orange "on air" dot near the
+            // bottom-bar area. The dot's position approximates where iOS
+            // renders the system home-indicator pill, so the visual reads
+            // "swipe from there to return".
+            ZStack(alignment: .bottom) {
+                Image(systemName: "iphone.gen3")
+                    .font(.system(size: 104, weight: .light))
+                    .foregroundStyle(.secondary)
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .padding(.bottom, 14)
+            }
+
+            VStack(spacing: 12) {
+                Text("Shhhcribble is on")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                Text("Swipe right on the bottom bar to return to the keyboard.\nYour transcript will land where you were typing.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            // Small waveform so the user has confirmation the mic is live.
+            SoundwaveBars(audioLevel: audioLevel)
+                .frame(width: 140, height: 36)
+
+            // "Install the shortcut to skip this screen next time" CTA.
+            // Hidden until the bundled Shhhcribble.shortcut lands (Step 2
+            // of the post-cleanup plan). The Bundle lookup returns nil
+            // until then, so the row collapses without leaving an empty
+            // affordance.
+            if let installURL = Self.installShortcutURL() {
+                Button {
+                    UIApplication.shared.open(installURL)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Install dictation shortcut to skip this screen")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule().fill(Color(.tertiarySystemFill))
+                    )
+                }
+            }
+
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .fill(Color(.tertiarySystemFill))
+                    )
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Shhhcribble is recording. Swipe right on the bottom bar to return to the keyboard. Your transcript will land where you were typing.")
+    }
+
+    /// Returns the iOS Shortcuts.app install URL for the bundled
+    /// `Shhhcribble.shortcut` file, or nil if the file isn't bundled yet.
+    /// The .shortcut ships via Step 2 of the post-cleanup plan; until
+    /// then, this returns nil and the install CTA is hidden.
+    ///
+    /// Shared shape with the onboarding install button — if you change
+    /// the URL format or filename here, mirror it in
+    /// `OnboardingView.KeyboardPage`.
+    static func installShortcutURL() -> URL? {
+        guard let fileURL = Bundle.main.url(
+            forResource: "Shhhcribble",
+            withExtension: "shortcut"
+        ) else {
+            return nil
+        }
+        return URL(string: "shortcuts://import-shortcut?url=\(fileURL.absoluteString)&name=Toggle%20Shhhcribble%20Recording")
+    }
+}
+
 /// Shown in the recording overlay when the audio engine is running
 /// but no buffers have arrived for ~1.5 s. Most common cause: AirPods
 /// are connected to another nearby device (often the user's Mac via
@@ -316,6 +445,7 @@ private struct ErrorCard: View {
     private func dismiss() {
         TranscriptionStatus.shared.partialSnippet = ""
         TranscriptionStatus.shared.launchedViaURL = false
+        TranscriptionStatus.shared.launchedFromKeyboard = false
         TranscriptionStatus.shared.setPhase(.idle)
     }
 }

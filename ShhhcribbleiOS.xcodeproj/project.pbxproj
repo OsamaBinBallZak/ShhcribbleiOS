@@ -30,7 +30,6 @@
 		67197467491D7E91CDD42A25 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */; };
 		72236AC0D4C1C07669C99068 /* FeedbackListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */; };
 		7485596D89D91B4F32AB7402 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D1BE8FC5BFF46DBFE2BC0EA8 /* FluidAudio */; };
-		7AF1187E2A02CBB988B10B40 /* ToggleRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46DB7DD6613AE5315B6E4A04 /* ToggleRecordingIntent.swift */; };
 		7F08B2964583055AF2F18C6A /* KeyboardKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE98113653B9CE4007AD261B /* KeyboardKit */; };
 		7F7E72E500EF1FBCB19F272B /* ShhhcribbleShared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 501ECF7681F569DB6FCE892B /* ShhhcribbleShared.framework */; };
 		8296F9A45D14F85C84C36697 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BF932B842F1D3FF7670E760F /* Assets.xcassets */; };
@@ -575,7 +574,6 @@
 				B6B8018E3F1EBEF46442FB99 /* ShhhcribbleWidgetBundle.swift in Sources */,
 				FEB74658A02A655E41807690 /* StartRecordingIntent.swift in Sources */,
 				E0EA78225E4C637B6B14A149 /* StopRecordingIntent.swift in Sources */,
-				7AF1187E2A02CBB988B10B40 /* ToggleRecordingIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

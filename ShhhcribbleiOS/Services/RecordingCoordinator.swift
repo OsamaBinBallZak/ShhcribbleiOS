@@ -246,21 +246,16 @@ actor RecordingCoordinator {
             try await task.value
         } catch is CancellationError {
             await TranscriptionStatus.shared.event("Recording task cancelled via Task.cancel()")
-            // Fix C (backlog #2): belt-and-braces cleanup. With Fix B the
-            // hoisted `defer` inside `performRecording` should already
-            // have reset state when the task cancelled. This explicit
-            // reset covers the edge case where cancel landed before
-            // `recording = true` was assigned (defer not yet registered),
-            // and any future refactor that might re-introduce the gap.
-            if recording {
-                recording = false
-                stopRequested = false
-                await MainActor.run {
-                    if TranscriptionStatus.shared.phase == .recording {
-                        TranscriptionStatus.shared.setPhase(.idle)
-                    }
-                }
-            }
+            // Belt-and-braces cleanup: by the time we reach here, every
+            // exit path inside `performRecording` should have already
+            // called `cleanup()` (including the `throw CancellationError()`
+            // path inside the model-load catch). Calling it again is
+            // idempotent — recording is already false, bgTaskId is .invalid,
+            // phase check skips re-resetting an error state. The one case
+            // this still covers: `Task.cancel()` fires before
+            // `performRecording`'s `recording = true` even runs, so its
+            // own cleanup never executes. We hit it here.
+            await cleanup()
         }
     }
 
@@ -280,39 +275,6 @@ actor RecordingCoordinator {
         stopRequested = false
         cancelled = false
 
-        // Fix B (backlog #2): defer block registered BEFORE the first
-        // cancellable await/checkCancellation. Earlier this block lived
-        // ~100 lines down (post-setUIRecording) so any `Task.cancel()`
-        // from a duplicate stop signal during init would throw past the
-        // cleanup, leaving `recording = true` and `phase = .recording`
-        // permanently stuck. With the defer up here, ANY exit path —
-        // cancellation, error, mid-init bail — cleans up actor state.
-        defer {
-            recording = false
-            stopRequested = false
-            appendTargetId = nil
-            let endId = self.bgTaskId
-            self.bgTaskId = .invalid
-            Task { @MainActor in
-                // Only collapse to .idle if we're still mid-recording; if a
-                // branch already moved us to an error state, leave that
-                // visible so the overlay can render the error UX.
-                if TranscriptionStatus.shared.phase == .recording {
-                    TranscriptionStatus.shared.setPhase(.idle)
-                }
-                TranscriptionStatus.shared.appendTargetTitle = nil
-                if endId != .invalid {
-                    UIApplication.shared.endBackgroundTask(endId)
-                }
-            }
-            Task { @MainActor in
-                ShhhcribbleActivityManager.shared.end()
-            }
-            // Clear live-stream data so the keyboard pill doesn't show
-            // a stale waveform/transcript next time it appears.
-            KeyboardBridge.clearLiveStreams()
-        }
-
         try Task.checkCancellation()
 
         // Pre-flight mic permission. Surface a typed error UX in the
@@ -325,13 +287,13 @@ actor RecordingCoordinator {
         case .undetermined:
             let granted = await AVAudioApplication.requestRecordPermission()
             if !granted {
-                recording = false
                 await TranscriptionStatus.shared.setPhase(.error(.micPermissionDenied))
+                await cleanup()
                 return
             }
         case .denied:
-            recording = false
             await TranscriptionStatus.shared.setPhase(.error(.micPermissionDenied))
+            await cleanup()
             return
         @unknown default:
             break
@@ -440,6 +402,7 @@ actor RecordingCoordinator {
             })
         } catch {
             await notifyError(.other("Recording failed to start."))
+            await cleanup()
             return
         }
 
@@ -449,10 +412,12 @@ actor RecordingCoordinator {
             try await modelReady
         } catch is CancellationError {
             AudioInput.shared.cancel()
+            await cleanup()
             throw CancellationError()
         } catch {
             AudioInput.shared.cancel()
             await notifyError(.modelLoadFailed(humaniseModelLoadError(error)))
+            await cleanup()
             return
         }
 
@@ -513,6 +478,7 @@ actor RecordingCoordinator {
             await MainActor.run {
                 TranscriptionStatus.shared.partialSnippet = ""
             }
+            await cleanup()
             return
         }
 
@@ -527,6 +493,7 @@ actor RecordingCoordinator {
             await MainActor.run {
                 TranscriptionStatus.shared.partialSnippet = ""
                 TranscriptionStatus.shared.launchedViaURL = false
+                TranscriptionStatus.shared.launchedFromKeyboard = false
                 ToastManager.shared.show("No speech detected", systemImage: "waveform.slash")
             }
             // Even on empty, wake the keyboard so its spinner clears and the
@@ -539,6 +506,7 @@ actor RecordingCoordinator {
             await MainActor.run {
                 AudioInput.shared.scheduleIdleExpiry()
             }
+            await cleanup()
             return
         }
 
@@ -548,10 +516,50 @@ actor RecordingCoordinator {
         await commit(transcript, duration: duration, trigger: trigger, appendingTo: target)
         await TranscriptionStatus.shared.event(target == nil ? "Copied to clipboard" : "Added to note")
         await maybeAutoBackground()
+        await cleanup()
     }
 
     func forceEndBackgroundTask() async {
         await stopRecording()
+    }
+
+    /// Tear down recording state at the end of any `performRecording` exit
+    /// path. Replaces the synchronous `defer` block this function used to
+    /// use, which had a race: `recording = false` fired synchronously in
+    /// the actor while `phase = .idle` was dispatched via
+    /// `Task { @MainActor in ... }` and not awaited. Between those two
+    /// writes, a Stop tap reaching the actor saw `recording == false`
+    /// but the overlay still rendered `.recording` (backlog #2 symptom:
+    /// the "Stop: already stopping or not recording" loop).
+    ///
+    /// This helper awaits the MainActor work, then sets `recording = false`
+    /// LAST. After `cleanup()` returns, the next actor message is
+    /// guaranteed to see both states consistent.
+    private func cleanup() async {
+        appendTargetId = nil
+        stopRequested = false
+        let endId = self.bgTaskId
+        self.bgTaskId = .invalid
+        await MainActor.run {
+            // Only collapse to .idle if we're still mid-recording; if a
+            // branch already moved us to an error state, leave that
+            // visible so the overlay can render the error UX.
+            if TranscriptionStatus.shared.phase == .recording {
+                TranscriptionStatus.shared.setPhase(.idle)
+            }
+            TranscriptionStatus.shared.appendTargetTitle = nil
+            if endId != .invalid {
+                UIApplication.shared.endBackgroundTask(endId)
+            }
+            ShhhcribbleActivityManager.shared.end()
+        }
+        // Clear live-stream data so the keyboard pill doesn't show
+        // a stale waveform/transcript next time it appears.
+        KeyboardBridge.clearLiveStreams()
+        // ORDER: recording flag flips LAST, after every MainActor write
+        // above has completed. This is the whole point of replacing the
+        // defer block — the actor flag and the phase move together.
+        recording = false
     }
 
     /// Event-driven trigger: whenever fresh audio lands and enough time has
@@ -597,6 +605,7 @@ actor RecordingCoordinator {
         // phase observer in the App stops recording & commits.
         guard TranscriptionStatus.shared.launchedViaURL else { return }
         TranscriptionStatus.shared.launchedViaURL = false
+        TranscriptionStatus.shared.launchedFromKeyboard = false
         TranscriptionStatus.shared.partialSnippet = ""
     }
 
@@ -657,6 +666,7 @@ actor RecordingCoordinator {
         UINotificationFeedbackGenerator().notificationOccurred(.error)
         TranscriptionStatus.shared.partialSnippet = ""
         TranscriptionStatus.shared.launchedViaURL = false
+        TranscriptionStatus.shared.launchedFromKeyboard = false
         TranscriptionStatus.shared.setPhase(.error(error))
     }
 }

@@ -163,10 +163,18 @@ targets:
       # framework — AppShortcutsProvider in the main app only registers with
       # iOS when the referenced intents live in the main app target. Adding
       # them here too means each target compiles its own copy.
+      #
+      # ToggleRecordingIntent is DELIBERATELY EXCLUDED from this widget — the
+      # widget never invokes it (verify: `grep -r ToggleRecordingIntent
+      # ShhhcribbleWidget/`). If included, iOS's intent routing policy picks
+      # the widget process for Control Center invocations, where the
+      # intent's `Self.performer` is nil (only `ShhhcribbleApp.init` in the
+      # main app sets it), so `perform()` returns "" without ever reaching
+      # `RecordingCoordinator`. Confirmed via syslog 2026-05-22 — see commit
+      # message for that fix.
       - path: ShhhcribbleiOS/App/Intents/StartRecordingIntent.swift
       - path: ShhhcribbleiOS/App/Intents/StopRecordingIntent.swift
       - path: ShhhcribbleiOS/App/Intents/CancelRecordingIntent.swift
-      - path: ShhhcribbleiOS/App/Intents/ToggleRecordingIntent.swift
     info:
       path: ShhhcribbleWidget/Info.plist
       properties:
