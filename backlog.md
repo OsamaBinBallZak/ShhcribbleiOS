@@ -4,6 +4,39 @@ Features and refinements we've consciously deferred. Tracked here so they don't 
 
 ---
 
+## AppIntent / shortcut audio-session investigation — 2026-05-22 (branch `claude/desync-cold-start-takeover`)
+
+#22. **`ToggleRecordingIntent` can't claim background audio from Shortcuts.app or Control Center invocations.** Reproduced on iOS 26.4.2 with current `main` + the desync-cold-start-takeover branch. When the intent is invoked from Shortcuts.app or a Control Center "Shortcut" tile, iOS denies our AVAudioSession activation with `cm_session_begin_interruption error_code=-12985 "Operation denied. Cannot interrupt others"` because "in the background and not the NowPlaying app." Input format reads `2 ch, 0 Hz` → tap install would crash if not guarded.
+
+Four research agents disagreed on the root cause. They DO converge once you read carefully:
+
+- **Web research (most authoritative)**: `SessionStartingIntent` is NOT a public Swift protocol. The `com.apple.link.systemProtocol.SessionStarting` identifier in Superwhisper's `extract.actionsdata` is most likely **auto-emitted by conformance to a Live-Activity-family protocol** (`LiveActivityIntent` / `LiveActivityStartingIntent` / `AudioPlaybackIntent` — all public). These conformances also guarantee in-process execution per Apple's docs ([Zach Waugh's confirmation](https://zachwaugh.com/posts/forcing-appintent-to-run-in-main-app-process)). `AudioRecordingIntent` alone does NOT guarantee in-process routing — explains why our intent landed in the widget extension during Control Center tests until we removed it from the widget target's sources (this commit).
+- **Apple's `AudioRecordingIntent` doc verbatim**: "you must start a Live Activity when you begin the audio recording and keep it active as long as you record audio. If you don't start a Live Activity, the audio recording stops." We currently start the Live Activity inside `RecordingCoordinator.performRecording` AFTER `perform()` returns — way past the privilege window.
+- **Superwhisper IPA diff (empirical)**: Their `ToggleRecordingIntent`'s `extract.actionsdata` shows BOTH `systemProtocols: ["AudioRecording", "SessionStarting"]`. Ours has only `AudioRecording`. Every other Info.plist key, entitlement, UIBackgroundModes flag, and linked framework is identical between the two bundles. The single delta is a Swift-level protocol conformance that auto-emits the second identifier.
+
+**The synthesized fix** (NOT YET ATTEMPTED — defer to a fresh session to re-verify the agent reasoning):
+
+1. Add `LiveActivityIntent` (or `LiveActivityStartingIntent`) conformance to `ToggleRecordingIntent` alongside the existing `AudioRecordingIntent`.
+2. Refactor `ToggleRecordingIntent.perform()` to do the audio-session-activation + Live-Activity-start **synchronously inside `perform()`** before returning. Current pattern (dispatch a `Task.detached` then sleep 200ms) loses the privilege grant the moment `perform()` returns.
+3. Adjust `AudioInput.start()` to NOT re-activate the session if perform() already did — currently it calls `configure()` + `activateRetrying()` defensively, which would double-activate.
+
+Once fixed: this also unblocks backlog #13 (.shortcut bundling). The shortcut on its own already works; what doesn't work yet is the intent-invocation-claiming-audio-from-background. Both ship together.
+
+**Don't relitigate without fresh evidence.** Two of the four research agents reached the wrong conclusion on first pass (Agent 3 claimed `openAppWhenRun: true` was the only path — empirically falsified by Superwhisper's IPA showing `false`). Verify each piece on actual device before committing more code.
+
+What's already shipped on the branch and IS working (verify with regression test):
+- Recording-state desync race fix (the actual bug behind backlog #2 — not the band-aid)
+- `launchedFromKeyboard` flag so swipe-back-to-keyboard doesn't terminate recording
+- Cold-start takeover view (visible only when keyboard-launched + before first partial)
+- `installPrivateEngine` crash guard (prevents SIGABRT on background-launch audio-format-invalid)
+- Widget no longer compiles `ToggleRecordingIntent` (eliminates one wrong routing target)
+
+The branch should NOT be merged to main until #22 is resolved AND the four items above are regression-tested on device. The shortcut path being broken is a known gap; the rest is improvements that shouldn't ship in isolation since the cold-start takeover is partially designed around the eventual shortcut flow.
+
+Plan file for fresh session: `~/.claude/plans/lets-write-cached-turing.md`. Read that first, then this backlog entry, then start the LiveActivityIntent refactor.
+
+---
+
 ## Keyboard pill redesign WIP — 2026-05-21
 
 #20. **Gray space above the keyboard pill varies by host app (Tiuri).** Sprint 8 keyboard redesign shipped a 38pt grey pill but the keyboard surface area above the pill renders differently depending on which app is showing the keyboard:
