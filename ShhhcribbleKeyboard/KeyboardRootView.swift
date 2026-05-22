@@ -77,9 +77,12 @@ private struct ShhhcribblePill: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if state.isRecordingActive {
-                audioBars
-            }
+            // Waveform always visible — bars sit at baseline 3pt when
+            // idle (since liveAudioLevel is 0), then animate to driven
+            // heights when recording starts. Makes the transition into
+            // recording feel like the bars "wake up" rather than
+            // appearing from nowhere.
+            audioBars
             statusText
                 .frame(maxWidth: .infinity, alignment: .trailing)
             trailingAction
@@ -112,9 +115,12 @@ private struct ShhhcribblePill: View {
                 let amplified = min(1.0, state.liveAudioLevel * 2.5)
                 let height = max(3, amplified * 22 * factor)
                 Capsule()
-                    .fill(Color.red)
+                    .fill(state.isRecordingActive
+                          ? Color.red
+                          : Color.black.opacity(0.30))
                     .frame(width: 2, height: CGFloat(height))
                     .animation(.easeOut(duration: 0.08), value: state.liveAudioLevel)
+                    .animation(.easeInOut(duration: 0.18), value: state.isRecordingActive)
             }
         }
         .frame(height: 22)
@@ -129,8 +135,19 @@ private struct ShhhcribblePill: View {
             .lineLimit(1)
             .truncationMode(.head)
             .mask(
+                // Fade-out happens only in the first ~10% of the
+                // available width. Earlier we had a 33% fade ramp
+                // which clipped short labels like "Ready" before they
+                // were fully visible (Tiuri: 2026-05-22). With this
+                // tighter ramp, short status text is fully legible and
+                // only long scrolling transcripts get masked at the
+                // leading edge.
                 LinearGradient(
-                    colors: [.black.opacity(0), .black, .black, .black],
+                    stops: [
+                        .init(color: .black.opacity(0), location: 0.0),
+                        .init(color: .black,            location: 0.10),
+                        .init(color: .black,            location: 1.0),
+                    ],
                     startPoint: .leading,
                     endPoint: .trailing
                 )
@@ -153,39 +170,44 @@ private struct ShhhcribblePill: View {
     private var micButton: some View {
         // 24pt blue circle, margin-right 7pt → center at -19 from pill
         // right edge (concentric w/ rounded end). Tap → onVoice().
-        Circle()
-            .fill(Color.accentColor)
-            .frame(width: 24, height: 24)
-            .overlay(
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-            )
-            .padding(.trailing, 7)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                KeyboardBridge.debug("voiceButton.onTapGesture fired (idle mic)")
-                onVoice()
-            }
+        // Wrapped in Button + PressDownButtonStyle so tapping it
+        // scale-dims briefly (no built-in feedback on a custom
+        // shape; Tiuri couldn't tell if the tap had registered).
+        Button {
+            KeyboardBridge.debug("voiceButton fired (idle mic)")
+            onVoice()
+        } label: {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 24, height: 24)
+                .overlay(
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+        }
+        .buttonStyle(PressDownButtonStyle())
+        .padding(.trailing, 7)
     }
 
     private var stopButton: some View {
         // 28pt red rounded-square. Margin-right 5pt → same center as
         // micButton. Tap → onStopActive().
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.red)
-            .frame(width: 28, height: 28)
-            .overlay(
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(.white)
-                    .frame(width: 12, height: 12)
-            )
-            .padding(.trailing, 5)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                KeyboardBridge.debug("voiceButton.onTapGesture fired (stop)")
-                onStopActive()
-            }
+        Button {
+            KeyboardBridge.debug("voiceButton fired (stop)")
+            onStopActive()
+        } label: {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.red)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(.white)
+                        .frame(width: 12, height: 12)
+                )
+        }
+        .buttonStyle(PressDownButtonStyle())
+        .padding(.trailing, 5)
     }
 
     private var transcribingButton: some View {
@@ -239,5 +261,19 @@ private struct ShhhcribblePill: View {
         }
         if state.engineWarm { return "Ready" }
         return "Tap to dictate"
+    }
+}
+
+/// Tap feedback for the pill's action buttons. Standard SwiftUI
+/// `Button` has no visible press state on custom shapes, so users
+/// (Tiuri 2026-05-22) couldn't tell whether a tap had registered.
+/// On press: scale to 0.85 + dim opacity slightly. Snappy 0.08s
+/// animation in, ease-out on release.
+private struct PressDownButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.85 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
     }
 }
