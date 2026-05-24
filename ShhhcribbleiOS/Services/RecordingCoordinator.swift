@@ -200,7 +200,15 @@ actor RecordingCoordinator {
             return
         }
         stopRequested = true
-        await TranscriptionStatus.shared.event("Manual stop")
+        await TranscriptionStatus.shared.event("Manual stop — draining 250ms")
+        // Short drain before tearing down the mic. Users naturally tap
+        // Stop ~100-300ms after the last word leaves their mouth; without
+        // this pause the tap is removed before iOS has delivered the
+        // tail buffer, so the closing syllables / final sentence go
+        // missing. The for-await loop in `performRecording` keeps feeding
+        // those buffers into `TextEngine.feed` for the whole window.
+        // 250ms is below the perception threshold for tap-stop latency.
+        try? await Task.sleep(nanoseconds: 250_000_000)
         AudioInput.shared.stop()
     }
 
@@ -516,7 +524,20 @@ actor RecordingCoordinator {
             return
         }
 
-        let transcript = await TextEngine.shared.finalize()
+        let finalised = await TextEngine.shared.finalize()
+        // Fallback: if the post-stop final TDT pass produced a shorter
+        // result than the last live snapshot, the tail buffer was likely
+        // too short for the decoder to emit confident tokens and trimmed
+        // a real sentence. Keep whichever is longer (length, not lexical)
+        // so we never regress on what the user saw in the live overlay.
+        let liveSnap = await MainActor.run { TranscriptionStatus.shared.partialSnippet }
+        let transcript: String
+        if liveSnap.count > finalised.count {
+            transcript = liveSnap
+            await TranscriptionStatus.shared.event("Final shorter than live (\(finalised.count) < \(liveSnap.count)) — using live snapshot")
+        } else {
+            transcript = finalised
+        }
         await TranscriptionStatus.shared.event("Got: \"\(transcript)\"")
 
         // `transcript` is already vocabulary-filtered (`TextEngine.finalize`

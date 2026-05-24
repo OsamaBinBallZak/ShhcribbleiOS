@@ -127,14 +127,39 @@ final class AudioInput: @unchecked Sendable {
             let type = AVAudioSession.InterruptionType(rawValue: typeRaw)
         else { return }
 
+        let inLPM = ProcessInfo.processInfo.isLowPowerModeEnabled
+
         switch type {
         case .began:
+            // iOS 17+ exposes the interruption reason so we can distinguish
+            // a real interruption (phone call, alarm — `.default`) from
+            // transients we shouldn't hard-stop on (mic muted by privacy
+            // switch, route disconnected, app suspended by system). Screen-
+            // lock in Low Power Mode posts a transient `.began` that
+            // previously killed recordings — feedback #4 (2026-05-24).
+            let reasonRaw = info[AVAudioSessionInterruptionReasonKey] as? UInt
+            let reason = reasonRaw.flatMap { AVAudioSession.InterruptionReason(rawValue: $0) }
+            let reasonDesc = reason.map { String(describing: $0) } ?? "unknown"
+
             if let started = interruptionGraceStart,
                Date().timeIntervalSince(started) < handoffGrace {
-                log.notice("Audio interruption .began ignored (within Siri handoff grace)")
+                log.notice("Audio interruption .began ignored (within Siri handoff grace, reason=\(reasonDesc, privacy: .public), LPM=\(inLPM, privacy: .public))")
                 return
             }
-            log.notice("Audio interruption .began — stopping recording")
+
+            // Only hard-stop on `.default` (real call, alarm). Other
+            // reasons get logged + ignored. If audio truly stops flowing
+            // after a transient, the staleness watchdog will surface
+            // `audioDeviceUnavailable` to the UI without killing the
+            // session. Treating an unknown nil reason as `.default`
+            // preserves prior behaviour for the pre-iOS-17 envelope —
+            // we'd rather over-stop than miss a real phone-call.
+            if let reason, reason != .default {
+                log.notice("Audio interruption .began ignored (reason=\(reasonDesc, privacy: .public), LPM=\(inLPM, privacy: .public)) — not a real interruption")
+                return
+            }
+
+            log.notice("Audio interruption .began — stopping (reason=\(reasonDesc, privacy: .public), LPM=\(inLPM, privacy: .public))")
             Task { await RecordingCoordinator.shared.stopRecording() }
         case .ended:
             break
@@ -295,6 +320,12 @@ final class AudioInput: @unchecked Sendable {
 
         isRecording = true
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        // Diag: log LPM state at recording start so field repros of the
+        // "screen-off in LPM stops recording" class of bug (feedback #4)
+        // are diagnosable from idevicesyslog without needing a tethered
+        // device.
+        log.notice("Recording started (LPM=\(ProcessInfo.processInfo.isLowPowerModeEnabled, privacy: .public))")
 
         return stream
     }
