@@ -279,6 +279,14 @@ struct ShhhcribbleApp: App {
     }
 
     private func handle(url: URL) {
+        // Share-to-transcribe (feedback #5): if iOS handed us a file
+        // URL pointing at an audio file (WhatsApp/Signal/Voice Memos
+        // share-sheet route), dispatch to ImportTranscriber instead of
+        // the URL-scheme handler.
+        if ImportTranscriber.looksLikeAudio(url) {
+            Task { await ImportTranscriber.shared.importAndTranscribe(from: url) }
+            return
+        }
         guard url.scheme?.lowercased() == "shhhcribble" else { return }
         let action = (url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))).lowercased()
 

@@ -24,6 +24,7 @@
 		32EF336E4F1238643CD62402 /* NotesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0455E8A2F77821C2798406E2 /* NotesListView.swift */; };
 		39709EDB971E5B5F478230AA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8825A2B0AA1C8E60DA3A31BB /* SettingsView.swift */; };
 		3E908E5AFC9334B562802178 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D583108174E01A3A8E7318A /* StopRecordingIntent.swift */; };
+		501E2EEF01298A1B8C5B5F7C /* ImportTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = C69C6792E0C5BB50CD2D6762 /* ImportTranscriber.swift */; };
 		5C09F93FEB042D216EA310B5 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9B54907BD89721546007451 /* RecordingView.swift */; };
 		6031DE1E90E080A56490D210 /* CancelRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */; };
 		6375D73C63BE966EE67C623A /* String+Substitutions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78E2494F7C979E52B94887C1 /* String+Substitutions.swift */; };
@@ -163,6 +164,7 @@
 		A66FFE6583F71BE22473665B /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AEDBF7C3A2E0ADE0D14B7EFE /* CancelRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CancelRecordingIntent.swift; sourceTree = "<group>"; };
 		BF932B842F1D3FF7670E760F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C69C6792E0C5BB50CD2D6762 /* ImportTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportTranscriber.swift; sourceTree = "<group>"; };
 		CCAD0BDCCEE9197686C02B83 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CD8483BEFD4DE0B5E7400C5E /* TranscriptionStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionStatus.swift; sourceTree = "<group>"; };
 		CFE71973CE6693712FCD2ACC /* FeedbackListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackListView.swift; sourceTree = "<group>"; };
@@ -360,6 +362,7 @@
 			children = (
 				40914B36D9B86D9FF4236C8A /* AudioInput.swift */,
 				25A18BFDC26CD1F473E1DBD8 /* ClipboardService.swift */,
+				C69C6792E0C5BB50CD2D6762 /* ImportTranscriber.swift */,
 				656869E266D1C8CCF0A5B31B /* NotesRepository.swift */,
 				3285FC762014ADE25EAD76FB /* RecordingCoordinator.swift */,
 				1DD50CC8335662AB2606C4D2 /* ShhhcribbleActivityManager.swift */,
@@ -613,6 +616,7 @@
 				09C160784BC6975DEC61A4D3 /* FeedbackRecorder.swift in Sources */,
 				F050101E5CB6B7A962A70117 /* FeedbackStore.swift in Sources */,
 				9DDE601FC10439667FD0C59B /* FillerWordsView.swift in Sources */,
+				501E2EEF01298A1B8C5B5F7C /* ImportTranscriber.swift in Sources */,
 				1BDCAA44C32853FE8EBA56E9 /* Note.swift in Sources */,
 				B2DC6A9E4BB42904174465C6 /* NoteDetailView.swift in Sources */,
 				EF43D28C29F6BA8CBE6F8977 /* NoteDetailViewModel.swift in Sources */,

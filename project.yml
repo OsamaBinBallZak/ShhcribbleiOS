@@ -77,6 +77,23 @@ targets:
             CFBundleURLName: com.hendritiuri.shhhcribble
             CFBundleURLSchemes:
               - shhhcribble
+        # Share-to-transcribe (feedback #5, 2026-05-24): register as a
+        # recipient for audio files so Shhhcribble appears in the iOS
+        # Share Sheet for WhatsApp / Signal / Voice Memos exports etc.
+        # LSHandlerRank=Alternate so we don't compete with the OS
+        # default app for opening the file directly. iOS routes the
+        # shared URL through `.onOpenURL`; the handler dispatches to
+        # `ImportTranscriber` based on a path-extension sniff.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Audio File
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.audio
+              - public.mp3
+              - public.mpeg-4-audio
+              - com.microsoft.waveform-audio
+              - public.aiff-audio
         LSRequiresIPhoneOS: true
         # Expose the app's Documents directory in Files.app under
         # "On My iPhone" → Shhhcribble. Lets us browse + extract the

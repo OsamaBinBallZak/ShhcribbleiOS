@@ -41,4 +41,5 @@ enum TriggerSource: String, Codable, Sendable {
     case actionButton
     case keyboard
     case manual
+    case imported
 }
