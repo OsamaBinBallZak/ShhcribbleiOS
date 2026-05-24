@@ -8,9 +8,19 @@ struct FeedbackListView: View {
     @State private var selectedItem: FeedbackItem?
     @State private var editMode: EditMode = .inactive
     @State private var selectedIds: Set<URL> = []
-    @State private var showBulkMail = false
-    @State private var bulkMailItems: [FeedbackItem] = []
+    @State private var bulkBatch: BulkMailBatch?
     @State private var showNoMailAlert = false
+
+    /// Identifiable wrapper around a list of feedback items so the bulk
+    /// mail sheet can be presented via `.sheet(item:)` rather than
+    /// `.sheet(isPresented:) + separate-array-state`. The latter raced
+    /// the array-write against the sheet's content-closure evaluation
+    /// and rendered an empty (white) sheet on first present — same
+    /// class of bug as the capture-view sendNow path (feedback #1).
+    private struct BulkMailBatch: Identifiable {
+        let id = UUID()
+        let items: [FeedbackItem]
+    }
 
     var body: some View {
         Group {
@@ -80,8 +90,8 @@ struct FeedbackListView: View {
         .sheet(item: $selectedItem) { item in
             FeedbackDetailView(item: item)
         }
-        .sheet(isPresented: $showBulkMail) {
-            FeedbackMailComposer(items: bulkMailItems) { sent in
+        .sheet(item: $bulkBatch) { batch in
+            FeedbackMailComposer(items: batch.items) { sent in
                 // Mark each successfully-sent item; no delete prompt.
                 // User keeps history on device per Harry's feedback
                 // (backlog #6c) — the "Sent ✓" badge on each row
@@ -91,6 +101,7 @@ struct FeedbackListView: View {
                 }
                 withAnimation { editMode = .inactive }
                 selectedIds.removeAll()
+                bulkBatch = nil
             }
             .ignoresSafeArea()
         }
@@ -131,8 +142,7 @@ struct FeedbackListView: View {
             showNoMailAlert = true
             return
         }
-        bulkMailItems = items
-        showBulkMail = true
+        bulkBatch = BulkMailBatch(items: items)
     }
 
     private var emptyState: some View {

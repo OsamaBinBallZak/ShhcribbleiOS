@@ -30,7 +30,6 @@ struct FeedbackCaptureView: View {
     @State private var errorMessage: String?
 
     @State private var pendingMailItem: FeedbackItem?
-    @State private var showMailComposer = false
     @State private var showNoMailAlert = false
 
     enum Phase {
@@ -106,19 +105,24 @@ struct FeedbackCaptureView: View {
                     .disabled(!canSend)
                 }
             }
-            .sheet(isPresented: $showMailComposer) {
-                if let item = pendingMailItem {
-                    FeedbackMailComposer(item: item) { sent in
-                        for sentItem in sent {
-                            FeedbackStore.shared.markSent(sentItem)
-                        }
-                        // Dismiss the capture view either way. The item is
-                        // already persisted; if the user cancelled the mail
-                        // composer, the draft stays in the list to retry.
-                        dismiss()
+            // `.sheet(item:)` rather than `.sheet(isPresented:) + if let`:
+            // the latter races the optional-write against the sheet's
+            // content-closure evaluation, which on first present renders
+            // empty (white screen). `.sheet(item:)` only fires once the
+            // bound optional flips non-nil and passes the value
+            // atomically. Was the root cause of feedback bug #1 (2026-05-24).
+            .sheet(item: $pendingMailItem) { item in
+                FeedbackMailComposer(item: item) { sent in
+                    for sentItem in sent {
+                        FeedbackStore.shared.markSent(sentItem)
                     }
-                    .ignoresSafeArea()
+                    pendingMailItem = nil
+                    // Dismiss the capture view either way. The item is
+                    // already persisted; if the user cancelled the mail
+                    // composer, the draft stays in the list to retry.
+                    dismiss()
                 }
+                .ignoresSafeArea()
             }
             .alert("Mail not available", isPresented: $showNoMailAlert) {
                 Button("OK", role: .cancel) {}
@@ -269,7 +273,12 @@ struct FeedbackCaptureView: View {
     private func sendNow() {
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        let item = FeedbackStore.shared.save(
+        // Idempotent: reuse the previously-staged item if Send was already
+        // tapped in this capture session. Belt-and-braces against feedback
+        // bug #2 (duplicate sent+unsent pairs) — even if the .sheet(item:)
+        // race that caused bug #1 ever sneaks back, two taps no longer
+        // create two folders.
+        let item = pendingMailItem ?? FeedbackStore.shared.save(
             transcript: trimmedTranscript,
             note: trimmedNote,
             screenshot: pastedImage,
@@ -282,7 +291,6 @@ struct FeedbackCaptureView: View {
             return
         }
         pendingMailItem = item
-        showMailComposer = true
     }
 
     private func formatTime(_ t: TimeInterval) -> String {

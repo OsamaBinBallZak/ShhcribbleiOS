@@ -42,6 +42,7 @@ final class FeedbackStore: ObservableObject {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         self.root = docs.appendingPathComponent("Feedback", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        dedupeOnce()
         reload()
     }
 
@@ -110,6 +111,56 @@ final class FeedbackStore: ObservableObject {
     func delete(_ item: FeedbackItem) {
         try? FileManager.default.removeItem(at: item.folder)
         reload()
+    }
+
+    /// One-shot cleanup for the sent+unsent duplicate pairs that landed
+    /// on devices before the 2026-05-24 white-sheet fix. Pairs the user
+    /// already had on disk look like: same transcript, createdAt within
+    /// ~10s of each other, one with `sentAt` and one without. Keep the
+    /// sent copy (canonical record of what was emailed) and delete the
+    /// drafty twin. Gated by a UserDefaults flag so it runs exactly once.
+    private static let dedupeFlagKey = "feedbackDedupRunAt2026-05-24"
+
+    private func dedupeOnce() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.dedupeFlagKey) else { return }
+        defer { defaults.set(true, forKey: Self.dedupeFlagKey) }
+
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return
+        }
+        let all: [FeedbackItem] = entries.compactMap { url in
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { return nil }
+            return FeedbackItem.load(from: url)
+        }
+
+        // Group by transcript. For each group, walk by createdAt and
+        // collapse runs of items where consecutive entries are <=10s
+        // apart. Within a run, the sent copy wins; otherwise keep the
+        // oldest (the original draft).
+        let byTranscript = Dictionary(grouping: all, by: { $0.transcript })
+        for (_, group) in byTranscript where group.count > 1 {
+            let sorted = group.sorted { $0.createdAt < $1.createdAt }
+            var run: [FeedbackItem] = []
+            for item in sorted {
+                if let last = run.last, item.createdAt.timeIntervalSince(last.createdAt) <= 10 {
+                    run.append(item)
+                } else {
+                    collapseRun(run)
+                    run = [item]
+                }
+            }
+            collapseRun(run)
+        }
+    }
+
+    private func collapseRun(_ run: [FeedbackItem]) {
+        guard run.count > 1 else { return }
+        let keeper = run.first(where: { $0.isSent }) ?? run.first!
+        for item in run where item.id != keeper.id {
+            try? FileManager.default.removeItem(at: item.folder)
+        }
     }
 }
 
